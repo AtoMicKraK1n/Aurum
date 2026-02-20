@@ -1,0 +1,35 @@
+import { registerGrailUser, getGrailUserBalance } from "../lib/grail/user";
+import { db } from "../db/queries";
+
+async function testRegistration() {
+  try {
+    const testWallet = "TestWallet" + Date.now();
+
+    console.log("Testing GRAIL user registration\n");
+
+    const user = await db.createUser(testWallet);
+    console.log("User created in DB:", user.id);
+
+    const { userId, userPda, txSignature } =
+      await registerGrailUser(testWallet);
+    console.log("Registered in GRAIL:", userId);
+    console.log("   PDA:", userPda);
+    console.log("   Tx:", txSignature);
+
+    // 3. Update DB
+    await db.updateGrailUser(user.id, userId, userPda);
+    console.log("DB updated");
+
+    // 4. Check balance
+    const balance = await getGrailUserBalance(userId);
+    console.log("Gold balance:", balance);
+
+    console.log("\nRegistration test passed!");
+    process.exit(0);
+  } catch (error) {
+    console.error("Test failed:", error);
+    process.exit(1);
+  }
+}
+
+testRegistration();

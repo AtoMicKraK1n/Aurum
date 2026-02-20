@@ -1,0 +1,11 @@
+{
+  "scripts": {
+    "dev": "bun --watch src/server.ts",
+    "build": "tsc",
+    "start": "node dist/server.js",
+    "batch": "bun src/scripts/run-batch.ts"
+  },
+  "dependencies": {
+    "@noble/hashes": "^2.0.1"
+  }
+}
