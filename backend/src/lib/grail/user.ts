@@ -21,7 +21,7 @@ export async function generateKycHash(walletAddress: string): Promise<string> {
   });
 
   const hashBytes = keccak_256(new TextEncoder().encode(kycData));
-  return bytesToHex(hashBytes);
+  return bs58.encode(hashBytes);
 }
 
 export async function registerGrailUser(walletAddress: string): Promise<{
@@ -39,6 +39,7 @@ export async function registerGrailUser(walletAddress: string): Promise<{
       `${GRAIL_API}/api/users`,
       {
         kycHash,
+        userWalletAddress: walletAddress,
         metadata: {
           referenceId: walletAddress,
         },
