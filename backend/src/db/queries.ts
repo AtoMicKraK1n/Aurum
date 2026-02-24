@@ -1,5 +1,5 @@
 import { pool } from "./client";
-import { User, DustQueue, GoldBalance } from "../types";
+import { User, DustQueue, GoldBalance, DepositIntent } from "../types";
 
 export const db = {
   async createUser(walletAddress: string): Promise<User> {
@@ -31,6 +31,78 @@ export const db = {
       [userId, usdcAmount],
     );
     return rows[0];
+  },
+
+  async createDepositIntent(
+    userId: string,
+    walletAddress: string,
+    expectedUsdcAmount: number,
+    expiresAt: Date,
+  ): Promise<DepositIntent> {
+    const { rows } = await pool.query<DepositIntent>(
+      `INSERT INTO deposit_intents (user_id, wallet_address, expected_usdc_amount, expires_at)
+       VALUES ($1, $2, $3, $4)
+       RETURNING *`,
+      [userId, walletAddress, expectedUsdcAmount, expiresAt.toISOString()],
+    );
+    return rows[0];
+  },
+
+  async getDepositIntentById(intentId: string): Promise<DepositIntent | null> {
+    const { rows } = await pool.query<DepositIntent>(
+      "SELECT * FROM deposit_intents WHERE id = $1",
+      [intentId],
+    );
+    return rows[0] || null;
+  },
+
+  async markDepositIntentConfirmed(
+    intentId: string,
+    txSignature: string,
+  ): Promise<void> {
+    await pool.query(
+      `UPDATE deposit_intents
+       SET status = 'confirmed',
+           tx_signature = $2,
+           confirmed_at = NOW()
+       WHERE id = $1`,
+      [intentId, txSignature],
+    );
+  },
+
+  async markDepositIntentStatus(intentId: string, status: "expired" | "failed"): Promise<void> {
+    await pool.query("UPDATE deposit_intents SET status = $2 WHERE id = $1", [
+      intentId,
+      status,
+    ]);
+  },
+
+  async createDustDepositTransaction(
+    userId: string,
+    usdcAmount: number,
+    txSignature: string,
+  ): Promise<void> {
+    try {
+      await pool.query(
+        `INSERT INTO transactions (user_id, type, usdc_amount, tx_signature)
+         VALUES ($1, 'dust_deposit', $2, $3)`,
+        [userId, usdcAmount, txSignature],
+      );
+    } catch (error) {
+      const pgError = error as { code?: string; message?: string };
+      const shouldFallback =
+        pgError.code === "42703" || pgError.message?.includes("usdc_amount");
+
+      if (!shouldFallback) {
+        throw error;
+      }
+
+      await pool.query(
+        `INSERT INTO transactions (user_id, type, sol_amount, tx_signature)
+         VALUES ($1, 'dust_deposit', $2, $3)`,
+        [userId, usdcAmount, txSignature],
+      );
+    }
   },
 
   async getPendingDust(): Promise<DustQueue[]> {
@@ -80,11 +152,29 @@ export const db = {
   },
 
   async createBatch(totalUsdc: number): Promise<string> {
-    const { rows } = await pool.query(
-      "INSERT INTO batches (total_usdc) VALUES ($1) RETURNING id",
-      [totalUsdc],
-    );
-    return rows[0].id;
+    try {
+      const { rows } = await pool.query(
+        "INSERT INTO batches (total_usdc) VALUES ($1) RETURNING id",
+        [totalUsdc],
+      );
+      return rows[0].id;
+    } catch (error) {
+      const pgError = error as { code?: string; message?: string };
+      const shouldFallback =
+        pgError.code === "23502" ||
+        pgError.code === "42703" ||
+        pgError.message?.includes("total_sol");
+
+      if (!shouldFallback) {
+        throw error;
+      }
+
+      const { rows } = await pool.query(
+        "INSERT INTO batches (total_sol) VALUES ($1) RETURNING id",
+        [totalUsdc],
+      );
+      return rows[0].id;
+    }
   },
 
   async updateBatch(
@@ -96,14 +186,40 @@ export const db = {
       status?: string;
     },
   ): Promise<void> {
-    const fields = Object.keys(updates)
-      .map((key, idx) => `${key} = $${idx + 2}`)
-      .join(", ");
+    const entries = Object.entries(updates);
+    const fields = entries.map(([key], idx) => `${key} = $${idx + 2}`).join(", ");
+    const values = entries.map(([, value]) => value);
 
-    await pool.query(`UPDATE batches SET ${fields} WHERE id = $1`, [
-      batchId,
-      ...Object.values(updates),
-    ]);
+    try {
+      await pool.query(`UPDATE batches SET ${fields} WHERE id = $1`, [
+        batchId,
+        ...values,
+      ]);
+    } catch (error) {
+      const pgError = error as { code?: string; message?: string };
+      const hasTotalUsdc = entries.some(([key]) => key === "total_usdc");
+      const shouldFallback =
+        hasTotalUsdc &&
+        (pgError.code === "42703" || pgError.message?.includes("total_usdc"));
+
+      if (!shouldFallback) {
+        throw error;
+      }
+
+      const fallbackEntries = entries.map(([key, value]) => [
+        key === "total_usdc" ? "total_sol" : key,
+        value,
+      ]);
+      const fallbackFields = fallbackEntries
+        .map(([key], idx) => `${key} = $${idx + 2}`)
+        .join(", ");
+      const fallbackValues = fallbackEntries.map(([, value]) => value);
+
+      await pool.query(`UPDATE batches SET ${fallbackFields} WHERE id = $1`, [
+        batchId,
+        ...fallbackValues,
+      ]);
+    }
   },
 
   async updateGrailUser(

@@ -7,6 +7,16 @@ export async function queueDust(
   res: Response<ApiResponse<{ queue: DustQueue; message: string }>>,
 ): Promise<void> {
   try {
+    const allowUnsafeQueue = process.env.ALLOW_UNVERIFIED_DUST_QUEUE === "true";
+    if (!allowUnsafeQueue) {
+      res.status(410).json({
+        success: false,
+        error:
+          "Direct queue is disabled. Use /api/deposits/create-intent and /api/deposits/confirm.",
+      });
+      return;
+    }
+
     const { walletAddress, usdcAmount } = req.body;
 
     if (!walletAddress || usdcAmount === undefined) {

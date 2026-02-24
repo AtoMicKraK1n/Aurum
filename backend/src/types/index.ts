@@ -32,6 +32,18 @@ export interface GoldBalance {
   updated_at: Date;
 }
 
+export interface DepositIntent {
+  id: string;
+  user_id: string;
+  wallet_address: string;
+  expected_usdc_amount: number;
+  tx_signature?: string;
+  status: "pending" | "confirmed" | "expired" | "failed";
+  expires_at: Date;
+  created_at: Date;
+  confirmed_at?: Date;
+}
+
 export interface ApiResponse<T = unknown> {
   success: boolean;
   data?: T;

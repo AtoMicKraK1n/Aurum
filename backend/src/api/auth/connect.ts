@@ -3,6 +3,16 @@ import { db } from "../../db/queries";
 import { registerGrailUser } from "../../lib/grail/user";
 import { ApiResponse, User } from "../../types";
 
+function formatErrorMessage(error: unknown): string {
+  if (error instanceof Error && error.message) {
+    return error.message;
+  }
+  if (typeof error === "string" && error.trim().length > 0) {
+    return error;
+  }
+  return "Unexpected server error";
+}
+
 export async function connectWallet(
   req: Request,
   res: Response<ApiResponse<{ user: User; isNewUser: boolean }>>,
@@ -18,16 +28,16 @@ export async function connectWallet(
     console.log(`🔌 Wallet connecting: ${walletAddress}`);
 
     // Create/get user
+    console.log("Checking/creating user in database...");
     const user = await db.createUser(walletAddress);
-    const isNewUser = !user.grail_user_id;
+    console.log(`Database user ready: ${user.id}`);
 
     // Register in GRAIL
     if (!user.grail_user_id) {
       console.log("🆕 New user - registering in GRAIL...");
 
       try {
-        const { userId, userPda, txSignature } =
-          await registerGrailUser(walletAddress);
+        const { userId, userPda } = await registerGrailUser(walletAddress);
 
         await db.updateGrailUser(user.id, userId, userPda);
 
@@ -69,9 +79,10 @@ export async function connectWallet(
       },
     });
   } catch (error) {
+    console.error("connectWallet failed:", error);
     res.status(500).json({
       success: false,
-      error: (error as Error).message,
+      error: formatErrorMessage(error),
     });
   }
 }

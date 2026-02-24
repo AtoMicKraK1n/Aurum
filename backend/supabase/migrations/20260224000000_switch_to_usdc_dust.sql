@@ -49,6 +49,27 @@ BEGIN
     SELECT 1
     FROM information_schema.columns
     WHERE table_schema = 'public'
+      AND table_name = 'batches'
+      AND column_name = 'total_sol'
+  ) AND EXISTS (
+    SELECT 1
+    FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'batches'
+      AND column_name = 'total_usdc'
+  ) THEN
+    ALTER TABLE batches ALTER COLUMN total_sol DROP NOT NULL;
+    UPDATE batches SET total_sol = total_usdc WHERE total_sol IS NULL;
+    ALTER TABLE batches DROP COLUMN total_sol;
+  END IF;
+END $$;
+
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1
+    FROM information_schema.columns
+    WHERE table_schema = 'public'
       AND table_name = 'transactions'
       AND column_name = 'sol_amount'
   ) AND NOT EXISTS (

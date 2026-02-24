@@ -8,7 +8,15 @@ const connection = new Connection(process.env.SOLANA_RPC_URL!);
 
 export async function getUserBalance(
   req: Request,
-  res: Response<ApiResponse<{ balances: { sol: number; gold: number } }>>,
+  res: Response<
+    ApiResponse<{
+      balances: {
+        sol: number;
+        gold: number;
+        onChainGrailGold: number;
+      };
+    }>
+  >,
 ): Promise<void> {
   try {
     const { walletAddress } = req.query;
@@ -28,10 +36,13 @@ export async function getUserBalance(
     const lamports = await connection.getBalance(pubkey);
     const solBalance = lamports / LAMPORTS_PER_SOL;
 
-    // Get GOLD balance
-    let goldBalance = 0;
+    // Custodial ledger gold distributed by batch jobs.
+    const goldBalance = await db.getGoldBalance(user.id);
+
+    // Optional on-chain GRAIL user account balance (can differ in custodial flow).
+    let onChainGrailGold = 0;
     if (user.grail_user_id) {
-      goldBalance = await getGrailUserBalance(user.grail_user_id);
+      onChainGrailGold = await getGrailUserBalance(user.grail_user_id);
     }
 
     res.json({
@@ -40,6 +51,7 @@ export async function getUserBalance(
         balances: {
           sol: solBalance,
           gold: goldBalance,
+          onChainGrailGold,
         },
       },
     });

@@ -4,8 +4,9 @@
     "build": "tsc",
     "start": "node dist/server.js",
     "batch": "bun src/scripts/run-batch.ts",
-    "test:registration": "bun run src/scripts/test-grail-registration.ts",
-    "test:purchase": "bun run src/scripts/test-grail-purchase.ts"
+    "test:registration": "bun run src/scripts/test-grail-registration.test.ts",
+    "test:purchase": "bun run src/scripts/test-grail-purchase.test.ts",
+    "test:batch": "bun run src/scripts/test-batch-converter.test.ts"
   },
   "dependencies": {
     "@noble/hashes": "^2.0.1"

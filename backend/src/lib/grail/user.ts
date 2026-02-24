@@ -1,17 +1,24 @@
 import axios from "axios";
 import { keccak_256 } from "@noble/hashes/sha3.js";
-import { bytesToHex } from "@noble/hashes/utils.js";
 import { Connection, Keypair, Transaction } from "@solana/web3.js";
 import bs58 from "bs58";
 
 const GRAIL_API =
   process.env.GRAIL_API_URL || "https://oro-tradebook-devnet.up.railway.app";
 const GRAIL_API_KEY = process.env.GRAIL_API_KEY;
+const GRAIL_HTTP_TIMEOUT_MS = Number(process.env.GRAIL_HTTP_TIMEOUT_MS || 15000);
+const TX_CONFIRM_TIMEOUT_MS = Number(process.env.TX_CONFIRM_TIMEOUT_MS || 45000);
 
 const connection = new Connection(process.env.SOLANA_RPC_URL!);
 const executiveAuthority = Keypair.fromSecretKey(
   bs58.decode(process.env.SPONSOR_PRIVATE_KEY!),
 );
+
+function timeoutAfter(ms: number, label: string): Promise<never> {
+  return new Promise((_, reject) => {
+    setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
+  });
+}
 
 export async function generateKycHash(walletAddress: string): Promise<string> {
   const kycData = JSON.stringify({
@@ -49,6 +56,7 @@ export async function registerGrailUser(walletAddress: string): Promise<{
           "Content-Type": "application/json",
           "x-api-key": GRAIL_API_KEY,
         },
+        timeout: GRAIL_HTTP_TIMEOUT_MS,
       },
     );
 
@@ -64,7 +72,10 @@ export async function registerGrailUser(walletAddress: string): Promise<{
     const txSignature = await connection.sendRawTransaction(tx.serialize());
 
     console.log(`Confirming transaction: ${txSignature}`);
-    await connection.confirmTransaction(txSignature);
+    await Promise.race([
+      connection.confirmTransaction(txSignature),
+      timeoutAfter(TX_CONFIRM_TIMEOUT_MS, "Transaction confirmation"),
+    ]);
 
     console.log(`User registered on-chain: ${txSignature}`);
 
@@ -92,6 +103,7 @@ export async function getGrailUserBalance(userId: string): Promise<number> {
       headers: {
         "x-api-key": GRAIL_API_KEY,
       },
+      timeout: GRAIL_HTTP_TIMEOUT_MS,
     });
 
     return response.data.data.balancesManagedByProgram?.gold?.amount || 0;
