@@ -11,8 +11,7 @@ export interface User {
 export interface DustQueue {
   id: string;
   user_id: string;
-  sol_amount: number;
-  sol_lamports: bigint;
+  usdc_amount: number;
   status: "pending" | "processing" | "completed" | "failed";
   batch_id?: string;
   created_at: Date;
@@ -20,10 +19,8 @@ export interface DustQueue {
 
 export interface Batch {
   id: string;
-  total_sol: number;
-  total_usdc?: number;
+  total_usdc: number;
   total_gold?: number;
-  jupiter_tx_signature?: string;
   grail_tx_signature?: string;
   status: "processing" | "completed" | "failed";
   executed_at: Date;

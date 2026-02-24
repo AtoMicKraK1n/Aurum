@@ -23,7 +23,7 @@ export async function getDustStatus(
     }
 
     const userPending = await db.getUserPendingDust(user.id);
-    const totalPending = userPending.reduce((sum, d) => sum + d.sol_amount, 0);
+    const totalPending = userPending.reduce((sum, d) => sum + d.usdc_amount, 0);
 
     res.json({
       success: true,

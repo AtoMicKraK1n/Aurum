@@ -1,5 +1,4 @@
 import { Request, Response } from "express";
-import { LAMPORTS_PER_SOL } from "@solana/web3.js";
 import { db } from "../../db/queries";
 import { ApiResponse, DustQueue } from "../../types";
 
@@ -8,16 +7,24 @@ export async function queueDust(
   res: Response<ApiResponse<{ queue: DustQueue; message: string }>>,
 ): Promise<void> {
   try {
-    const { walletAddress, solAmount } = req.body;
+    const { walletAddress, usdcAmount } = req.body;
 
-    if (!walletAddress || !solAmount) {
+    if (!walletAddress || usdcAmount === undefined) {
       res
         .status(400)
         .json({ success: false, error: "Missing required fields" });
       return;
     }
 
-    if (solAmount <= 0) {
+    if (typeof usdcAmount !== "number" || !Number.isFinite(usdcAmount)) {
+      res.status(400).json({
+        success: false,
+        error: "usdcAmount must be a valid number",
+      });
+      return;
+    }
+
+    if (usdcAmount <= 0) {
       res
         .status(400)
         .json({ success: false, error: "Amount must be positive" });
@@ -30,8 +37,7 @@ export async function queueDust(
       return;
     }
 
-    const solLamports = BigInt(Math.floor(solAmount * LAMPORTS_PER_SOL));
-    const queue = await db.queueDust(user.id, solAmount, solLamports);
+    const queue = await db.queueDust(user.id, usdcAmount);
 
     res.json({
       success: true,

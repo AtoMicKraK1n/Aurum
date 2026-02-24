@@ -1,22 +1,22 @@
-# Aurum — Convert Dust SOL to Gold
+# Aurum — Convert Dust USDC to Gold
 
-Dust conversion for Solana to tokenized Gold.  
+Dust conversion for Solana USDC to tokenized Gold.  
 Built with Oro’s GRAIL API.
 
-Aurum allows users to deposit dust — small, idle amounts sitting in their wallets — which are batched daily and converted into tokenized gold, distributed proportionally back to users.
+Aurum allows users to deposit dust USDC — small, idle amounts sitting in their wallets — which are batched daily and converted into tokenized gold, distributed proportionally back to users.
 
 ---
 
 ## What It Does
 
-Users deposit small amounts of SOL. The system aggregates these deposits and converts them into GOLD once per day.
+Users deposit small amounts of USDC. The system aggregates these deposits and converts them into GOLD once per day.
 
 ### Flow
 
-1. User queues their dust SOL
+1. User queues their dust USDC
 2. Daily job aggregates all pending dust
-3. Swap SOL → USDC (via Jupiter)
-4. Buy GOLD with USDC (via GRAIL)
+3. Buy GOLD with USDC (via GRAIL)
+4. Custodial partner signs and submits transaction
 5. Distribute gold proportionally to users
 
 ## 🏗 Architecture
@@ -38,7 +38,7 @@ Handles all user interactions.
   Wallet connection and verification.
 
 - **Dust Queue Service**  
-  Adds user SOL to the conversion queue.
+  Adds user USDC to the conversion queue.
 
 - **Balance Service**  
   Fetches user GOLD holdings.
@@ -57,7 +57,7 @@ Runs once daily at **00:00 UTC**.
 **Steps**
 
 1. Fetch all pending dust from Postgres
-2. Aggregate SOL and swap to USDC (Jupiter)
+2. Aggregate USDC deposits
 3. Purchase GOLD using USDC (GRAIL)
 4. Calculate proportional user shares
 5. Update user balances in Postgres
@@ -73,7 +73,6 @@ High-level flow:
 - Frontend calls Backend API  
 - Backend triggers Daily Batch Job  
 - Batch Job interacts with:
-  - Jupiter (SOL → USDC)
   - GRAIL (USDC → GOLD)
   - Solana RPC (transaction confirmations)
 - All application state lives in PostgreSQL
@@ -82,7 +81,6 @@ High-level flow:
 
 Think of it as:
 
-> **“Turn forgotten SOL dust into GOLD — automatically.”**
+> **“Turn forgotten USDC dust into GOLD — automatically.”**
 
 ---
-

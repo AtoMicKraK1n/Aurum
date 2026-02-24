@@ -24,12 +24,11 @@ export const db = {
 
   async queueDust(
     userId: string,
-    solAmount: number,
-    solLamports: bigint,
+    usdcAmount: number,
   ): Promise<DustQueue> {
     const { rows } = await pool.query<DustQueue>(
-      "INSERT INTO dust_queue (user_id, sol_amount, sol_lamports) VALUES ($1, $2, $3) RETURNING *",
-      [userId, solAmount, solLamports.toString()],
+      "INSERT INTO dust_queue (user_id, usdc_amount) VALUES ($1, $2) RETURNING *",
+      [userId, usdcAmount],
     );
     return rows[0];
   },
@@ -80,10 +79,10 @@ export const db = {
     );
   },
 
-  async createBatch(totalSol: number): Promise<string> {
+  async createBatch(totalUsdc: number): Promise<string> {
     const { rows } = await pool.query(
-      "INSERT INTO batches (total_sol) VALUES ($1) RETURNING id",
-      [totalSol],
+      "INSERT INTO batches (total_usdc) VALUES ($1) RETURNING id",
+      [totalUsdc],
     );
     return rows[0].id;
   },
@@ -93,7 +92,6 @@ export const db = {
     updates: {
       total_usdc?: number;
       total_gold?: number;
-      jupiter_tx_signature?: string;
       grail_tx_signature?: string;
       status?: string;
     },
