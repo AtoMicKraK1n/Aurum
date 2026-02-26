@@ -1,5 +1,6 @@
 import { Request, Response } from "express";
 import { runBatchConversion } from "../../lib/batch/converter";
+import { db } from "../../db/queries";
 import { ApiResponse } from "../../types";
 
 let isBatchRunning = false;
@@ -40,7 +41,17 @@ export async function runBatchNow(
   }
 
   isBatchRunning = true;
+  let lockAcquired = false;
   try {
+    lockAcquired = await db.acquireBatchLock();
+    if (!lockAcquired) {
+      res.status(409).json({
+        success: false,
+        error: "Batch is already running (global lock active)",
+      });
+      return;
+    }
+
     const result = await runBatchConversion();
     res.json({ success: true, data: result });
   } catch (error) {
@@ -49,6 +60,11 @@ export async function runBatchNow(
       error: (error as Error).message,
     });
   } finally {
+    if (lockAcquired) {
+      await db.releaseBatchLock().catch((releaseError) => {
+        console.error("Failed to release batch lock:", releaseError);
+      });
+    }
     isBatchRunning = false;
   }
 }

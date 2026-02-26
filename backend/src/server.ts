@@ -3,13 +3,37 @@ import cors from "cors";
 import dotenv from "dotenv";
 import apiRoutes from "./api";
 import { runBatchConversion } from "./lib/batch/converter";
+import { db } from "./db/queries";
 
 dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 3001;
+const defaultCorsOrigins = ["http://localhost:3000", "http://127.0.0.1:3000"];
+const configuredOrigins = (process.env.CORS_ORIGINS || "")
+  .split(",")
+  .map((origin) => origin.trim())
+  .filter(Boolean);
+const allowedOrigins = new Set([...defaultCorsOrigins, ...configuredOrigins]);
 
-app.use(cors());
+app.use(
+  cors({
+    origin: (origin, callback) => {
+      if (!origin) {
+        callback(null, true);
+        return;
+      }
+
+      if (allowedOrigins.has(origin)) {
+        callback(null, true);
+        return;
+      }
+
+      callback(new Error("Not allowed by CORS"));
+    },
+    credentials: true,
+  }),
+);
 app.use(express.json());
 
 app.get("/health", (req, res) => {
@@ -42,7 +66,14 @@ async function runScheduledBatch(): Promise<void> {
   }
 
   isCronBatchRunning = true;
+  let lockAcquired = false;
   try {
+    lockAcquired = await db.acquireBatchLock();
+    if (!lockAcquired) {
+      console.log("Skipping scheduled batch run; global batch lock active");
+      return;
+    }
+
     const result = await runBatchConversion();
     console.log(
       `Scheduled batch completed: users=${result.usersProcessed}, usdc=${result.totalUsdc}, gold=${result.totalGold}`,
@@ -50,6 +81,11 @@ async function runScheduledBatch(): Promise<void> {
   } catch (error) {
     console.error("Scheduled batch failed:", error);
   } finally {
+    if (lockAcquired) {
+      await db.releaseBatchLock().catch((releaseError) => {
+        console.error("Failed to release batch lock:", releaseError);
+      });
+    }
     isCronBatchRunning = false;
   }
 }
@@ -63,9 +99,9 @@ function msUntilNextUtcMidnight(): number {
 }
 
 function startBatchCron(): void {
-  const enabled = process.env.ENABLE_BATCH_CRON !== "false";
+  const enabled = process.env.ENABLE_BATCH_CRON === "true";
   if (!enabled) {
-    console.log("Batch cron disabled (ENABLE_BATCH_CRON=false)");
+    console.log("Batch cron disabled (ENABLE_BATCH_CRON is not true)");
     return;
   }
 

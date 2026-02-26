@@ -44,6 +44,22 @@ export interface DepositIntent {
   confirmed_at?: Date;
 }
 
+export interface SelfCustodyTrade {
+  id: string;
+  user_id: string;
+  grail_user_id: string;
+  usdc_amount: number;
+  estimated_gold_amount: number;
+  max_usdc_amount: number;
+  serialized_tx: string;
+  signed_serialized_tx?: string;
+  submitted_tx_signature?: string;
+  status: "pending" | "completed" | "failed";
+  error_message?: string;
+  created_at: Date;
+  updated_at: Date;
+}
+
 export interface ApiResponse<T = unknown> {
   success: boolean;
   data?: T;

@@ -3,8 +3,9 @@ import { keccak_256 } from "@noble/hashes/sha3.js";
 import { Connection, Keypair, Transaction } from "@solana/web3.js";
 import bs58 from "bs58";
 
-const GRAIL_API =
-  process.env.GRAIL_API_URL || "https://oro-tradebook-devnet.up.railway.app";
+const GRAIL_API = (
+  process.env.GRAIL_API_URL || "https://oro-tradebook-devnet.up.railway.app"
+).replace(/\/+$/, "");
 const GRAIL_API_KEY = process.env.GRAIL_API_KEY;
 const GRAIL_HTTP_TIMEOUT_MS = Number(process.env.GRAIL_HTTP_TIMEOUT_MS || 15000);
 const TX_CONFIRM_TIMEOUT_MS = Number(process.env.TX_CONFIRM_TIMEOUT_MS || 45000);

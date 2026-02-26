@@ -2,8 +2,9 @@ import axios from "axios";
 import { Connection, Keypair, Transaction } from "@solana/web3.js";
 import bs58 from "bs58";
 
-const GRAIL_API =
-  process.env.GRAIL_API_URL || "https://oro-tradebook-devnet.up.railway.app";
+const GRAIL_API = (
+  process.env.GRAIL_API_URL || "https://oro-tradebook-devnet.up.railway.app"
+).replace(/\/+$/, "");
 const GRAIL_API_KEY = process.env.GRAIL_API_KEY;
 
 const connection = new Connection(process.env.SOLANA_RPC_URL!);
@@ -91,6 +92,62 @@ export async function purchaseGoldForUser(
 
     throw new Error(`Failed to purchase gold: ${(error as Error).message}`);
   }
+}
+
+export async function createSelfCustodyPurchaseIntent(
+  userId: string,
+  usdcAmount: number,
+  slippagePercent: number = 5,
+): Promise<{
+  goldAmount: number;
+  maxUsdcAmount: number;
+  serializedTx: string;
+}> {
+  try {
+    const { goldAmount } = await estimateGoldPurchase(usdcAmount);
+    const maxUsdcAmount = usdcAmount * (1 + slippagePercent / 100);
+
+    const response = await axios.post(
+      `${GRAIL_API}/api/trading/purchases/user`,
+      {
+        userId,
+        goldAmount,
+        maxUsdcAmount,
+      },
+      {
+        headers: {
+          "Content-Type": "application/json",
+          "x-api-key": GRAIL_API_KEY,
+        },
+      },
+    );
+
+    return {
+      goldAmount: response.data.data.goldAmount,
+      maxUsdcAmount,
+      serializedTx: response.data.data.transaction.serializedTx,
+    };
+  } catch (error) {
+    if (axios.isAxiosError(error)) {
+      const detail =
+        typeof error.response?.data === "string"
+          ? error.response.data
+          : JSON.stringify(error.response?.data);
+      throw new Error(
+        `Failed to create self-custody purchase intent: ${error.message}${detail ? ` | ${detail}` : ""}`,
+      );
+    }
+    throw error;
+  }
+}
+
+export async function submitSignedSelfCustodyTransaction(
+  signedSerializedTx: string,
+): Promise<string> {
+  const txBuffer = Buffer.from(signedSerializedTx, "base64");
+  const txSignature = await connection.sendRawTransaction(txBuffer);
+  await connection.confirmTransaction(txSignature);
+  return txSignature;
 }
 
 export async function purchaseGoldPartner(

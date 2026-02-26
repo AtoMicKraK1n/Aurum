@@ -1,6 +1,9 @@
 "use client";
 
-import { FormEvent, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useState } from "react";
+import { ApiClientError } from "@/lib/api/client";
+import { createAurumApiService } from "@/lib/api/services";
+import { useAuthState } from "@/lib/state/auth-context";
 
 type ApiState = {
   loading: boolean;
@@ -10,51 +13,47 @@ type ApiState = {
 };
 
 const DEFAULT_BASE_URL = "https://aurum-rodf.onrender.com";
+const DEFAULT_WALLET = "5UCaKTTMTPaYgmPL45cU1ay5GAjHjqvXXq7VpNPu84rf";
 
 export default function QaPage() {
   const [baseUrl, setBaseUrl] = useState(DEFAULT_BASE_URL);
-  const [walletAddress, setWalletAddress] = useState(
-    "5UCaKTTMTPaYgmPL45cU1ay5GAjHjqvXXq7VpNPu84rf",
-  );
+  const { walletAddress, setWalletAddress, setUser } = useAuthState();
   const [usdcAmount, setUsdcAmount] = useState("1.25");
   const [intentId, setIntentId] = useState("");
   const [txSignature, setTxSignature] = useState("");
   const [adminKey, setAdminKey] = useState("");
   const [result, setResult] = useState<ApiState>({ loading: false });
 
-  const normalizedBase = useMemo(() => baseUrl.replace(/\/+$/, ""), [baseUrl]);
+  const api = useMemo(() => createAurumApiService(baseUrl), [baseUrl]);
   const inputClass =
     "mb-3 w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 placeholder:text-zinc-500 focus:border-zinc-700 focus:outline-none focus:ring-2 focus:ring-zinc-300";
 
-  async function callApi(
-    path: string,
-    method: "GET" | "POST",
-    body?: Record<string, unknown>,
-    headers?: Record<string, string>,
-  ) {
+  useEffect(() => {
+    if (!walletAddress) {
+      setWalletAddress(DEFAULT_WALLET);
+    }
+  }, [walletAddress, setWalletAddress]);
+
+  async function runRequest<T>(request: () => Promise<T>) {
     setResult({ loading: true });
     try {
-      const response = await fetch(`${normalizedBase}${path}`, {
-        method,
-        headers: {
-          ...(body ? { "Content-Type": "application/json" } : {}),
-          ...(headers || {}),
-        },
-        body: body ? JSON.stringify(body) : undefined,
-      });
-
-      const json = (await response.json()) as unknown;
+      const data = await request();
       setResult({
         loading: false,
-        status: response.status,
-        body: json,
+        status: 200,
+        body: data,
       });
-
-      const parsed = json as { data?: { intentId?: string } };
-      if (parsed?.data?.intentId) {
-        setIntentId(parsed.data.intentId);
-      }
     } catch (error) {
+      if (error instanceof ApiClientError) {
+        setResult({
+          loading: false,
+          status: error.status,
+          body: error.body,
+          error: error.message,
+        });
+        return;
+      }
+
       setResult({
         loading: false,
         error: error instanceof Error ? error.message : "Unknown request error",
@@ -64,39 +63,40 @@ export default function QaPage() {
 
   function submitConnect(e: FormEvent) {
     e.preventDefault();
-    callApi("/api/auth/connect", "POST", { walletAddress });
+    runRequest(async () => {
+      const data = await api.connectWallet(walletAddress);
+      setUser(data.user);
+      return data;
+    });
   }
 
   function submitCreateIntent(e: FormEvent) {
     e.preventDefault();
-    callApi("/api/deposits/create-intent", "POST", {
-      walletAddress,
-      usdcAmount: Number(usdcAmount),
+    runRequest(async () => {
+      const data = await api.createDepositIntent(walletAddress, Number(usdcAmount));
+      setIntentId(data.intentId);
+      return data;
     });
   }
 
   function submitConfirmIntent(e: FormEvent) {
     e.preventDefault();
-    callApi("/api/deposits/confirm", "POST", { intentId, txSignature });
+    runRequest(() => api.confirmDeposit(intentId, txSignature));
   }
 
   function submitStatus(e: FormEvent) {
     e.preventDefault();
-    const query = encodeURIComponent(walletAddress);
-    callApi(`/api/dust/status?walletAddress=${query}`, "GET");
+    runRequest(() => api.getDustStatus(walletAddress));
   }
 
   function submitBalance(e: FormEvent) {
     e.preventDefault();
-    const query = encodeURIComponent(walletAddress);
-    callApi(`/api/user/balance?walletAddress=${query}`, "GET");
+    runRequest(() => api.getUserBalance(walletAddress));
   }
 
   function submitBatchRun(e: FormEvent) {
     e.preventDefault();
-    callApi("/api/admin/batch/run", "POST", undefined, {
-      "x-admin-key": adminKey,
-    });
+    runRequest(() => api.runBatch(adminKey));
   }
 
   return (

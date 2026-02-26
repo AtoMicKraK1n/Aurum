@@ -1,7 +1,27 @@
 import { pool } from "./client";
-import { User, DustQueue, GoldBalance, DepositIntent } from "../types";
+import {
+  User,
+  DustQueue,
+  GoldBalance,
+  DepositIntent,
+  SelfCustodyTrade,
+} from "../types";
+
+const BATCH_LOCK_KEY = 7249001;
 
 export const db = {
+  async acquireBatchLock(): Promise<boolean> {
+    const { rows } = await pool.query<{ locked: boolean }>(
+      "SELECT pg_try_advisory_lock($1) AS locked",
+      [BATCH_LOCK_KEY],
+    );
+    return !!rows[0]?.locked;
+  },
+
+  async releaseBatchLock(): Promise<void> {
+    await pool.query("SELECT pg_advisory_unlock($1)", [BATCH_LOCK_KEY]);
+  },
+
   async createUser(walletAddress: string): Promise<User> {
     const { rows } = await pool.query<User>(
       `INSERT INTO users (wallet_address) 
@@ -103,6 +123,71 @@ export const db = {
         [userId, usdcAmount, txSignature],
       );
     }
+  },
+
+  async createSelfCustodyTrade(input: {
+    userId: string;
+    grailUserId: string;
+    usdcAmount: number;
+    estimatedGoldAmount: number;
+    maxUsdcAmount: number;
+    serializedTx: string;
+  }): Promise<SelfCustodyTrade> {
+    const { rows } = await pool.query<SelfCustodyTrade>(
+      `INSERT INTO self_custody_trades (
+         user_id,
+         grail_user_id,
+         usdc_amount,
+         estimated_gold_amount,
+         max_usdc_amount,
+         serialized_tx
+       ) VALUES ($1, $2, $3, $4, $5, $6)
+       RETURNING *`,
+      [
+        input.userId,
+        input.grailUserId,
+        input.usdcAmount,
+        input.estimatedGoldAmount,
+        input.maxUsdcAmount,
+        input.serializedTx,
+      ],
+    );
+    return rows[0];
+  },
+
+  async getSelfCustodyTradeById(tradeId: string): Promise<SelfCustodyTrade | null> {
+    const { rows } = await pool.query<SelfCustodyTrade>(
+      "SELECT * FROM self_custody_trades WHERE id = $1",
+      [tradeId],
+    );
+    return rows[0] || null;
+  },
+
+  async completeSelfCustodyTrade(input: {
+    tradeId: string;
+    signedSerializedTx: string;
+    submittedTxSignature: string;
+  }): Promise<void> {
+    await pool.query(
+      `UPDATE self_custody_trades
+       SET signed_serialized_tx = $2,
+           submitted_tx_signature = $3,
+           status = 'completed',
+           updated_at = NOW()
+       WHERE id = $1`,
+      [input.tradeId, input.signedSerializedTx, input.submittedTxSignature],
+    );
+  },
+
+  async failSelfCustodyTrade(tradeId: string, errorMessage: string): Promise<void> {
+    await pool.query(
+      `UPDATE self_custody_trades
+       SET status = 'failed',
+           error_message = $2,
+           updated_at = NOW()
+       WHERE id = $1`,
+      [tradeId, errorMessage],
+    );
   },
 
   async getPendingDust(): Promise<DustQueue[]> {
