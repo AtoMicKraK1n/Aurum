@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { connectWallet } from "./auth/connect";
+import { createAuthNonceChallenge } from "./auth/nonce";
 import { getUserBalance } from "./user/balance";
 import { queueDust } from "./dust/queue";
 import { getDustStatus } from "./dust/status";
@@ -13,6 +14,7 @@ import { quoteSell } from "./quotes/sell";
 
 const router = Router();
 
+router.post("/auth/nonce", createAuthNonceChallenge);
 router.post("/auth/connect", connectWallet);
 router.get("/user/balance", getUserBalance);
 router.post("/dust/queue", queueDust);

@@ -28,6 +28,12 @@ export type ConnectWalletData = {
   isNewUser: boolean;
 };
 
+export type AuthNonceData = {
+  nonce: string;
+  message: string;
+  expiresAt: string;
+};
+
 export type CreateDepositIntentData = {
   intentId: string;
   recipientWallet: string;

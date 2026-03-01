@@ -1,5 +1,6 @@
 import { ApiClient, createApiClient } from "./client";
 import {
+  AuthNonceData,
   BuyQuoteData,
   ConfirmDepositData,
   ConnectWalletData,
@@ -13,9 +14,21 @@ import {
 export class AurumApiService {
   constructor(private readonly client: ApiClient) {}
 
-  connectWallet(walletAddress: string): Promise<ConnectWalletData> {
+  getAuthNonce(walletAddress: string): Promise<AuthNonceData> {
+    return this.client.post<AuthNonceData>("/api/auth/nonce", {
+      walletAddress,
+    });
+  }
+
+  connectWallet(
+    walletAddress: string,
+    nonce: string,
+    signature: string,
+  ): Promise<ConnectWalletData> {
     return this.client.post<ConnectWalletData>("/api/auth/connect", {
       walletAddress,
+      nonce,
+      signature,
     });
   }
 

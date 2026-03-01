@@ -60,6 +60,15 @@ export interface SelfCustodyTrade {
   updated_at: Date;
 }
 
+export interface WalletAuthNonce {
+  id: string;
+  wallet_address: string;
+  nonce: string;
+  expires_at: Date;
+  used_at?: Date;
+  created_at: Date;
+}
+
 export interface ApiResponse<T = unknown> {
   success: boolean;
   data?: T;

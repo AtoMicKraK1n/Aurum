@@ -1,12 +1,12 @@
 "use client";
 
 import { AuthProvider } from "@/lib/state/auth-context";
-import { SolanaProvider } from "@/lib/solana/solana-provider";
+import { PrivyAppProvider } from "@/lib/privy/privy-provider";
 
 export function AppProviders({ children }: { children: React.ReactNode }) {
   return (
-    <SolanaProvider>
+    <PrivyAppProvider>
       <AuthProvider>{children}</AuthProvider>
-    </SolanaProvider>
+    </PrivyAppProvider>
   );
 }

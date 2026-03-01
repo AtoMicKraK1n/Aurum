@@ -5,6 +5,7 @@ import {
   GoldBalance,
   DepositIntent,
   SelfCustodyTrade,
+  WalletAuthNonce,
 } from "../types";
 
 const BATCH_LOCK_KEY = 7249001;
@@ -32,6 +33,49 @@ export const db = {
       [walletAddress],
     );
     return rows[0];
+  },
+
+  async createWalletAuthNonce(
+    walletAddress: string,
+    nonce: string,
+    expiresAt: Date,
+  ): Promise<WalletAuthNonce> {
+    await pool.query(
+      "DELETE FROM wallet_auth_nonces WHERE wallet_address = $1 AND used_at IS NULL",
+      [walletAddress],
+    );
+
+    const { rows } = await pool.query<WalletAuthNonce>(
+      `INSERT INTO wallet_auth_nonces (wallet_address, nonce, expires_at)
+       VALUES ($1, $2, $3)
+       RETURNING *`,
+      [walletAddress, nonce, expiresAt.toISOString()],
+    );
+    return rows[0];
+  },
+
+  async getValidWalletAuthNonce(
+    walletAddress: string,
+    nonce: string,
+  ): Promise<WalletAuthNonce | null> {
+    const { rows } = await pool.query<WalletAuthNonce>(
+      `SELECT *
+       FROM wallet_auth_nonces
+       WHERE wallet_address = $1
+         AND nonce = $2
+         AND used_at IS NULL
+         AND expires_at > NOW()
+       LIMIT 1`,
+      [walletAddress, nonce],
+    );
+    return rows[0] || null;
+  },
+
+  async markWalletAuthNonceUsed(id: string): Promise<void> {
+    await pool.query(
+      "UPDATE wallet_auth_nonces SET used_at = NOW() WHERE id = $1",
+      [id],
+    );
   },
 
   async getUserByWallet(walletAddress: string): Promise<User | null> {

@@ -2,6 +2,7 @@ import { Request, Response } from "express";
 import { db } from "../../db/queries";
 import { registerGrailUser } from "../../lib/grail/user";
 import { ApiResponse, User } from "../../types";
+import { verifyWalletSignature } from "../../lib/auth/wallet-signature";
 
 function formatErrorMessage(error: unknown): string {
   if (error instanceof Error && error.message) {
@@ -18,12 +19,36 @@ export async function connectWallet(
   res: Response<ApiResponse<{ user: User; isNewUser: boolean }>>,
 ): Promise<void> {
   try {
-    const { walletAddress } = req.body;
+    const { walletAddress, nonce, signature } = req.body;
 
     if (!walletAddress) {
       res.status(400).json({ success: false, error: "walletAddress required" });
       return;
     }
+    if (!nonce || !signature) {
+      res
+        .status(400)
+        .json({ success: false, error: "nonce and signature are required" });
+      return;
+    }
+
+    const nonceRecord = await db.getValidWalletAuthNonce(walletAddress, nonce);
+    if (!nonceRecord) {
+      res.status(401).json({ success: false, error: "Invalid or expired nonce" });
+      return;
+    }
+
+    const isValidSignature = verifyWalletSignature({
+      walletAddress,
+      nonce,
+      signatureBase58: signature,
+    });
+    if (!isValidSignature) {
+      res.status(401).json({ success: false, error: "Invalid wallet signature" });
+      return;
+    }
+
+    await db.markWalletAuthNonceUsed(nonceRecord.id);
 
     console.log(`🔌 Wallet connecting: ${walletAddress}`);
 
