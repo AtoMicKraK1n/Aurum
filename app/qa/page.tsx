@@ -18,6 +18,7 @@ const DEFAULT_WALLET = "5UCaKTTMTPaYgmPL45cU1ay5GAjHjqvXXq7VpNPu84rf";
 export default function QaPage() {
   const [baseUrl, setBaseUrl] = useState(DEFAULT_BASE_URL);
   const { walletAddress, setWalletAddress, setUser } = useAuthState();
+  const [authSignature, setAuthSignature] = useState("");
   const [usdcAmount, setUsdcAmount] = useState("1.25");
   const [intentId, setIntentId] = useState("");
   const [txSignature, setTxSignature] = useState("");
@@ -64,16 +65,29 @@ export default function QaPage() {
   function submitConnect(e: FormEvent) {
     e.preventDefault();
     runRequest(async () => {
-      const data = await api.connectWallet(walletAddress);
+      const nonceData = await api.getAuthNonce(walletAddress);
+      const signatureToUse = authSignature.trim() || "qa-signature-placeholder";
+      const data = await api.connectWallet(
+        walletAddress,
+        nonceData.nonce,
+        signatureToUse,
+      );
       setUser(data.user);
-      return data;
+      return {
+        nonce: nonceData.nonce,
+        message: nonceData.message,
+        connect: data,
+      };
     });
   }
 
   function submitCreateIntent(e: FormEvent) {
     e.preventDefault();
     runRequest(async () => {
-      const data = await api.createDepositIntent(walletAddress, Number(usdcAmount));
+      const data = await api.createDepositIntent(
+        walletAddress,
+        Number(usdcAmount),
+      );
       setIntentId(data.intentId);
       return data;
     });
@@ -141,13 +155,19 @@ export default function QaPage() {
             1. Connect Wallet
           </h2>
           <p className="mb-2 text-xs text-zinc-600">
-            Fill only the wallet address (devnet).
+            Fetches nonce then calls connect. Paste signed message output below.
           </p>
           <input
             value={walletAddress}
             onChange={(e) => setWalletAddress(e.target.value)}
             className={inputClass}
             placeholder="Wallet address"
+          />
+          <input
+            value={authSignature}
+            onChange={(e) => setAuthSignature(e.target.value)}
+            className={inputClass}
+            placeholder="Base58 signature (optional placeholder if empty)"
           />
           <button className="rounded-lg bg-zinc-900 px-3 py-2 text-sm font-semibold text-white hover:bg-black">
             POST /api/auth/connect

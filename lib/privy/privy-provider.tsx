@@ -30,8 +30,11 @@ export function PrivyAppProvider({ children }: { children: React.ReactNode }) {
           ],
         },
         embeddedWallets: {
-          createOnLogin: "off",
+          solana: {
+            createOnLogin: "off",
+          },
         },
+
         externalWallets: {
           solana: {
             connectors: toSolanaWalletConnectors(),
