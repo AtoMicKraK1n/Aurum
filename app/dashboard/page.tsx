@@ -20,6 +20,8 @@ type DashboardData = {
   progressPercent: number;
 };
 
+type PurchaseMode = "custodial" | "self_custody";
+
 function parseNumber(value: number | string): number {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : 0;
@@ -106,6 +108,9 @@ export default function DashboardPage() {
     progressPercent: 0,
   });
   const [convertInput, setConvertInput] = useState("");
+  const [purchaseMode, setPurchaseMode] = useState<PurchaseMode>("self_custody");
+  const [purchaseActionMessage, setPurchaseActionMessage] = useState<string | null>(null);
+  const [creatingIntent, setCreatingIntent] = useState(false);
 
   const activePrivyWallet = wallets.find(
     (wallet) => wallet.walletClientType === "solana",
@@ -152,15 +157,18 @@ export default function DashboardPage() {
       setError(null);
 
       try {
-        const [balanceData, dustData, quoteData] = await Promise.all([
+        const [balanceData, dustData, quoteData, purchaseConfig] = await Promise.all([
           api.getUserBalance(resolvedWalletAddress),
           api.getDustStatus(resolvedWalletAddress),
           api.getSellQuote(1),
+          api.getPurchaseConfig(),
         ]);
 
         if (cancelled) {
           return;
         }
+
+        setPurchaseMode(purchaseConfig.operatingMode);
 
         const goldOz = parseNumber(balanceData.balances.gold);
         const goldPricePerOz = parseNumber(quoteData.goldPricePerOunce);
@@ -187,15 +195,9 @@ export default function DashboardPage() {
             return prev;
           }
           return walletUsdcBalance > 0
-            ? walletUsdcBalance.toLocaleString(undefined, {
-                minimumFractionDigits: 2,
-                maximumFractionDigits: 2,
-              })
+            ? walletUsdcBalance.toFixed(2)
             : pendingDust > 0
-              ? pendingDust.toLocaleString(undefined, {
-                  minimumFractionDigits: 2,
-                  maximumFractionDigits: 2,
-                })
+              ? pendingDust.toFixed(2)
               : "";
         });
       } catch (loadError) {
@@ -215,6 +217,48 @@ export default function DashboardPage() {
       cancelled = true;
     };
   }, [api, canAccessScreen, ready, resolvedWalletAddress, walletsReady]);
+
+  async function handleConfirmDeposit() {
+    setError(null);
+    setPurchaseActionMessage(null);
+
+    if (!resolvedWalletAddress) {
+      setError("Wallet not connected");
+      return;
+    }
+
+    if (purchaseMode === "custodial") {
+      setError(
+        "Custodial mode is a temporary fallback. Set PURCHASE_OPERATING_MODE=self_custody to use the primary flow.",
+      );
+      return;
+    }
+
+    const normalizedInput = convertInput.replace(/,/g, "").trim();
+    const usdcAmount = Number(normalizedInput);
+    if (!Number.isFinite(usdcAmount) || usdcAmount <= 0) {
+      setError("Enter a valid USDC amount greater than 0");
+      return;
+    }
+
+    setCreatingIntent(true);
+    try {
+      const intent = await api.createSelfPurchaseIntent(
+        resolvedWalletAddress,
+        usdcAmount,
+        20,
+        true,
+        false,
+      );
+      setPurchaseActionMessage(
+        `Self-custody intent created (trade ${intent.trade.id}). Wallet signature + submit is required to finalize.`,
+      );
+    } catch (actionError) {
+      setError(formatError(actionError));
+    } finally {
+      setCreatingIntent(false);
+    }
+  }
 
   return (
     <main className="dashboard-shell">
@@ -331,9 +375,18 @@ export default function DashboardPage() {
             <button
               type="button"
               className="dashboard-button"
-              disabled={loading}
+              disabled={loading || creatingIntent || purchaseMode === "custodial"}
+              onClick={() => {
+                void handleConfirmDeposit();
+              }}
             >
-              <span>CONFIRM DEPOSIT</span>
+              <span>
+                {creatingIntent
+                  ? "CREATING INTENT..."
+                  : purchaseMode === "self_custody"
+                    ? "START SELF-CUSTODY PURCHASE"
+                    : "CUSTODIAL MODE (DISABLED)"}
+              </span>
               <span aria-hidden="true">→</span>
             </button>
             <p className="dashboard-footer">
@@ -341,7 +394,11 @@ export default function DashboardPage() {
                 ? `ERROR: ${error}`
                 : loading
                   ? "LOADING LIVE DATA"
-                  : "POWERED BY GRAIL"}
+                  : purchaseActionMessage
+                    ? purchaseActionMessage
+                    : purchaseMode === "custodial"
+                      ? "MODE: CUSTODIAL (FALLBACK ONLY) · POWERED BY GRAIL"
+                      : "MODE: SELF-CUSTODY (PRIMARY) · POWERED BY GRAIL"}
             </p>
           </div>
         </div>

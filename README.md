@@ -115,3 +115,11 @@ Required backend env vars:
 - `TREASURY_WALLET_ADDRESS` - partner treasury wallet receiving USDC
 - `USDC_MINT` - optional; defaults to devnet USDC mint
 - `DEPOSIT_INTENT_EXPIRY_MINUTES` - optional; default `30`
+- `PURCHASE_OPERATING_MODE` - optional; `self_custody` (default) or `custodial` fallback
+
+Purchase mode behavior:
+
+1. `self_custody`:
+Enables `POST /api/self/purchase-intent` and `POST /api/self/purchase-submit` flow.
+2. `custodial`:
+Fallback mode using deposit intents + batch conversion. Self-custody endpoints return `409`.

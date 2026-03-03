@@ -86,3 +86,18 @@ export type SellQuoteData = {
   stale: boolean;
   timestamp: string;
 };
+
+export type PurchaseConfigData = {
+  operatingMode: "custodial" | "self_custody";
+  selfCustodyEnabled: boolean;
+};
+
+export type SelfPurchaseIntentData = {
+  trade: {
+    id: string;
+    status: "pending" | "completed" | "failed";
+  };
+  serializedTx: string;
+  signingInstructions?: unknown;
+  status?: string;
+};

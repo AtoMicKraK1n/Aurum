@@ -6,8 +6,10 @@ import {
   ConnectWalletData,
   CreateDepositIntentData,
   DustStatusData,
+  PurchaseConfigData,
   RunBatchData,
   SellQuoteData,
+  SelfPurchaseIntentData,
   UserBalanceData,
 } from "./types";
 
@@ -71,6 +73,26 @@ export class AurumApiService {
 
   getSellQuote(goldAmount: number): Promise<SellQuoteData> {
     return this.client.get<SellQuoteData>(`/api/quotes/sell?goldAmount=${goldAmount}`);
+  }
+
+  getPurchaseConfig(): Promise<PurchaseConfigData> {
+    return this.client.get<PurchaseConfigData>("/api/purchase/config");
+  }
+
+  createSelfPurchaseIntent(
+    walletAddress: string,
+    usdcAmount: number,
+    slippagePercent: number = 20,
+    coSign: boolean = true,
+    userAsFeePayer: boolean = false,
+  ): Promise<SelfPurchaseIntentData> {
+    return this.client.post<SelfPurchaseIntentData>("/api/self/purchase-intent", {
+      walletAddress,
+      usdcAmount,
+      slippagePercent,
+      co_sign: coSign,
+      userAsFeePayer,
+    });
   }
 }
 
