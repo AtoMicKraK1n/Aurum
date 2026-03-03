@@ -11,6 +11,7 @@ import { createSelfPurchaseIntent } from "./self/purchase-intent";
 import { submitSelfPurchase } from "./self/purchase-submit";
 import { quoteBuy } from "./quotes/buy";
 import { quoteSell } from "./quotes/sell";
+import { getPurchaseConfig } from "./purchase/config";
 
 const router = Router();
 
@@ -25,6 +26,7 @@ router.post("/self/purchase-intent", createSelfPurchaseIntent);
 router.post("/self/purchase-submit", submitSelfPurchase);
 router.get("/quotes/buy", quoteBuy);
 router.get("/quotes/sell", quoteSell);
+router.get("/purchase/config", getPurchaseConfig);
 router.post("/admin/batch/run", runBatchNow);
 
 export default router;

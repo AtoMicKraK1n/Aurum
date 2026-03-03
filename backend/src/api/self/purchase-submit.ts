@@ -2,6 +2,7 @@ import { Request, Response } from "express";
 import { db } from "../../db/queries";
 import { ApiResponse } from "../../types";
 import { submitSignedSelfCustodyTransaction } from "../../lib/grail/purchase";
+import { isSelfCustodyEnabled } from "../../lib/purchase-mode";
 
 export async function submitSelfPurchase(
   req: Request,
@@ -14,12 +15,28 @@ export async function submitSelfPurchase(
   >,
 ): Promise<void> {
   try {
-    const { tradeId, signedSerializedTx } = req.body;
+    if (!isSelfCustodyEnabled()) {
+      res.status(409).json({
+        success: false,
+        error:
+          "Self-custody purchases are disabled (PURCHASE_OPERATING_MODE=custodial). Use deposit intent + batch flow.",
+      });
+      return;
+    }
 
-    if (!tradeId || !signedSerializedTx) {
+    const { tradeId, signedSerializedTx, signedTransaction } = req.body;
+    const signedPayload =
+      typeof signedSerializedTx === "string" && signedSerializedTx.length > 0
+        ? signedSerializedTx
+        : typeof signedTransaction === "string" && signedTransaction.length > 0
+          ? signedTransaction
+          : "";
+
+    if (!tradeId || !signedPayload) {
       res.status(400).json({
         success: false,
-        error: "tradeId and signedSerializedTx are required",
+        error:
+          "tradeId and signedSerializedTx (or signedTransaction) are required",
       });
       return;
     }
@@ -40,11 +57,11 @@ export async function submitSelfPurchase(
 
     try {
       const txSignature =
-        await submitSignedSelfCustodyTransaction(signedSerializedTx);
+        await submitSignedSelfCustodyTransaction(signedPayload);
 
       await db.completeSelfCustodyTrade({
         tradeId,
-        signedSerializedTx,
+        signedSerializedTx: signedPayload,
         submittedTxSignature: txSignature,
       });
 

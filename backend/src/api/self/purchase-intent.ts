@@ -2,6 +2,7 @@ import { Request, Response } from "express";
 import { db } from "../../db/queries";
 import { ApiResponse, SelfCustodyTrade } from "../../types";
 import { createSelfCustodyPurchaseIntent } from "../../lib/grail/purchase";
+import { isSelfCustodyEnabled } from "../../lib/purchase-mode";
 
 export async function createSelfPurchaseIntent(
   req: Request,
@@ -9,11 +10,30 @@ export async function createSelfPurchaseIntent(
     ApiResponse<{
       trade: SelfCustodyTrade;
       serializedTx: string;
+      signingInstructions?: unknown;
+      status?: string;
     }>
   >,
 ): Promise<void> {
   try {
-    const { walletAddress, usdcAmount, slippagePercent } = req.body;
+    if (!isSelfCustodyEnabled()) {
+      res.status(409).json({
+        success: false,
+        error:
+          "Self-custody purchases are disabled (PURCHASE_OPERATING_MODE=custodial). Use deposit intent + batch flow.",
+      });
+      return;
+    }
+
+    const {
+      walletAddress,
+      usdcAmount,
+      slippagePercent,
+      cosign,
+      co_sign,
+      userAsFeePayer,
+      userAsfeepayer,
+    } = req.body;
 
     if (!walletAddress || usdcAmount === undefined) {
       res.status(400).json({
@@ -48,6 +68,16 @@ export async function createSelfPurchaseIntent(
       user.grail_user_id,
       usdcAmount,
       typeof slippagePercent === "number" ? slippagePercent : 5,
+      typeof cosign === "boolean"
+        ? cosign
+        : typeof co_sign === "boolean"
+          ? co_sign
+          : false,
+      typeof userAsFeePayer === "boolean"
+        ? userAsFeePayer
+        : typeof userAsfeepayer === "boolean"
+          ? userAsfeepayer
+          : true,
     );
 
     const trade = await db.createSelfCustodyTrade({
@@ -64,6 +94,8 @@ export async function createSelfPurchaseIntent(
       data: {
         trade,
         serializedTx: intent.serializedTx,
+        signingInstructions: intent.signingInstructions,
+        status: intent.status,
       },
     });
   } catch (error) {

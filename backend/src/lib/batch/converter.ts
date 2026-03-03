@@ -38,6 +38,7 @@ const defaultDeps: ConversionDeps = {
   updateBatch: (batchId, updates) => db.updateBatch(batchId, updates),
   updateGoldBalance: (userId, goldAmount) =>
     db.updateGoldBalance(userId, goldAmount),
+  // TODO(2026-03-31): Remove custodial batch purchase path after self-custody validation window.
   purchaseGold: (usdcAmount) => purchaseGoldPartner(usdcAmount),
 };
 
