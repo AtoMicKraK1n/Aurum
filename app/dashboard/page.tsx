@@ -8,19 +8,21 @@ import { ApiClientError } from "@/lib/api/client";
 import { createAurumApiService } from "@/lib/api/services";
 import { useAuthState } from "@/lib/state/auth-context";
 
-const DEFAULT_DEVNET_RPC_URL = "https://api.devnet.solana.com";
-const DEFAULT_DEVNET_USDC_MINT = "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU";
+const DEFAULT_DEVNET_RPC_URL =
+  "https://devnet.helius-rpc.com/?api-key=c434b5e0-f58e-4d87-84c1-b7bba03c939f";
+const DEFAULT_DEVNET_USDC_MINT = "8METbBgV5CSyorAaW5Lm42dbWdE8JU9vfBiM67TK9Mp4";
+const DEFAULT_DEVNET_GOLD_MINT = "Cu5rvMuh9asSHyCtof81B8sYU8iM62MgaWVVZnQDDZst";
+const FALLBACK_NETWORK_FEE_USD = 0.02;
 
 type DashboardData = {
   totalGoldOz: number;
   totalGoldUsd: number;
   walletDustUsd: number;
-  batchPendingCount: number;
   goldPricePerOz: number;
-  progressPercent: number;
 };
 
 type PurchaseMode = "custodial" | "self_custody";
+type RegistrationGate = "checking" | "registered" | "unregistered";
 
 function parseNumber(value: number | string): number {
   const parsed = Number(value);
@@ -40,35 +42,65 @@ function formatError(error: unknown): string {
   return "Unexpected request failure";
 }
 
-function formatNextBatch(secondsLeft: number): string {
-  const hours = Math.floor(secondsLeft / 3600)
-    .toString()
-    .padStart(2, "0");
-  const minutes = Math.floor((secondsLeft % 3600) / 60)
-    .toString()
-    .padStart(2, "0");
-  const seconds = (secondsLeft % 60).toString().padStart(2, "0");
-  return `${hours}:${minutes}:${seconds}`;
+function parseInputAmount(value: string): number {
+  const numeric = Number(value.replace(/,/g, "").trim());
+  return Number.isFinite(numeric) && numeric > 0 ? numeric : 0;
 }
 
-function secondsUntilNextUtcMidnight(nowMs: number): number {
-  const now = new Date(nowMs);
-  const next = new Date(now);
-  next.setUTCDate(next.getUTCDate() + 1);
-  next.setUTCHours(0, 0, 0, 0);
-  const diffMs = Math.max(0, next.getTime() - now.getTime());
-  return Math.floor(diffMs / 1000);
+function shortenWalletAddress(address: string): string {
+  if (address.length <= 10) {
+    return address;
+  }
+  return `${address.slice(0, 4)}...${address.slice(-4)}`;
 }
 
-async function getWalletUsdcBalance(walletAddress: string): Promise<number> {
+type BuyEstimateState = {
+  usdcAmount: number;
+  goldAmount: number;
+  stale: boolean;
+  source: "grail_live" | "fallback_cache";
+  updatedAt: string;
+};
+
+function getPrivySolanaAddress(privyUser: unknown): string {
+  if (!privyUser || typeof privyUser !== "object") {
+    return "";
+  }
+
+  const candidate = privyUser as {
+    wallet?: { address?: string };
+    linkedAccounts?: Array<{
+      type?: string;
+      chainType?: string;
+      address?: string;
+    }>;
+  };
+
+  if (candidate.wallet?.address) {
+    return candidate.wallet.address;
+  }
+
+  const linked = candidate.linkedAccounts || [];
+  const solanaAccount = linked.find(
+    (account) =>
+      account.address &&
+      (account.type === "wallet" || account.type === "cross_app") &&
+      account.chainType === "solana",
+  );
+
+  return solanaAccount?.address || "";
+}
+
+async function getWalletTokenBalance(
+  walletAddress: string,
+  mintAddress: string,
+): Promise<number> {
   const rpcUrl =
     process.env.NEXT_PUBLIC_SOLANA_RPC_URL || DEFAULT_DEVNET_RPC_URL;
-  const usdcMint =
-    process.env.NEXT_PUBLIC_USDC_MINT || DEFAULT_DEVNET_USDC_MINT;
 
   const connection = new Connection(rpcUrl);
   const ownerPubkey = new PublicKey(walletAddress);
-  const mintPubkey = new PublicKey(usdcMint);
+  const mintPubkey = new PublicKey(mintAddress);
 
   const tokenAccounts = await connection.getParsedTokenAccountsByOwner(
     ownerPubkey,
@@ -92,40 +124,53 @@ export default function DashboardPage() {
   const router = useRouter();
   const api = useMemo(() => createAurumApiService(), []);
   const { walletAddress, setWalletAddress } = useAuthState();
-  const { ready, authenticated } = usePrivy();
+  const { ready, authenticated, user } = usePrivy();
   const { wallets, ready: walletsReady } = useWallets();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [nextBatchSeconds, setNextBatchSeconds] = useState(() =>
-    secondsUntilNextUtcMidnight(Date.now()),
-  );
   const [dashboardData, setDashboardData] = useState<DashboardData>({
     totalGoldOz: 0,
     totalGoldUsd: 0,
     walletDustUsd: 0,
-    batchPendingCount: 0,
     goldPricePerOz: 0,
-    progressPercent: 0,
   });
   const [convertInput, setConvertInput] = useState("");
-  const [purchaseMode, setPurchaseMode] = useState<PurchaseMode>("self_custody");
-  const [purchaseActionMessage, setPurchaseActionMessage] = useState<string | null>(null);
+  const [purchaseMode, setPurchaseMode] =
+    useState<PurchaseMode>("self_custody");
+  const [purchaseActionMessage, setPurchaseActionMessage] = useState<
+    string | null
+  >(null);
   const [creatingIntent, setCreatingIntent] = useState(false);
+  const [registeringUser, setRegisteringUser] = useState(false);
+  const [registrationGate, setRegistrationGate] =
+    useState<RegistrationGate>("checking");
+  const [buyEstimate, setBuyEstimate] = useState<BuyEstimateState>({
+    usdcAmount: 0,
+    goldAmount: 0,
+    stale: false,
+    source: "grail_live",
+    updatedAt: "",
+  });
 
   const activePrivyWallet = wallets.find(
     (wallet) => wallet.walletClientType === "solana",
   );
   const activeWallet = activePrivyWallet?.address ?? "";
+  const privyUserWallet = getPrivySolanaAddress(user);
   const canAccessScreen = Boolean(
-    authenticated || activeWallet || walletAddress,
+    authenticated || activeWallet || walletAddress || privyUserWallet,
   );
-  const resolvedWalletAddress = walletAddress || activeWallet;
+  const resolvedWalletAddress = walletAddress || activeWallet || privyUserWallet;
 
   useEffect(() => {
     if (activeWallet) {
       setWalletAddress(activeWallet);
+      return;
     }
-  }, [activeWallet, setWalletAddress]);
+    if (privyUserWallet) {
+      setWalletAddress(privyUserWallet);
+    }
+  }, [activeWallet, privyUserWallet, setWalletAddress]);
 
   useEffect(() => {
     if (!ready || !walletsReady) {
@@ -137,16 +182,13 @@ export default function DashboardPage() {
   }, [canAccessScreen, ready, router, walletsReady]);
 
   useEffect(() => {
-    const intervalId = window.setInterval(() => {
-      setNextBatchSeconds(secondsUntilNextUtcMidnight(Date.now()));
-    }, 1000);
-    return () => {
-      window.clearInterval(intervalId);
-    };
-  }, []);
-
-  useEffect(() => {
-    if (!ready || !walletsReady || !resolvedWalletAddress || !canAccessScreen) {
+    if (
+      registrationGate !== "registered" ||
+      !ready ||
+      !walletsReady ||
+      !resolvedWalletAddress ||
+      !canAccessScreen
+    ) {
       return;
     }
 
@@ -157,12 +199,13 @@ export default function DashboardPage() {
       setError(null);
 
       try {
-        const [balanceData, dustData, quoteData, purchaseConfig] = await Promise.all([
-          api.getUserBalance(resolvedWalletAddress),
-          api.getDustStatus(resolvedWalletAddress),
-          api.getSellQuote(1),
-          api.getPurchaseConfig(),
-        ]);
+        const [balanceData, dustData, buyQuoteData, purchaseConfig] =
+          await Promise.all([
+            api.getUserBalance(resolvedWalletAddress),
+            api.getDustStatus(resolvedWalletAddress),
+            api.getBuyQuote(1),
+            api.getPurchaseConfig(),
+          ]);
 
         if (cancelled) {
           return;
@@ -171,23 +214,31 @@ export default function DashboardPage() {
         setPurchaseMode(purchaseConfig.operatingMode);
 
         const goldOz = parseNumber(balanceData.balances.gold);
-        const goldPricePerOz = parseNumber(quoteData.goldPricePerOunce);
-        const totalGoldUsd = goldOz * goldPricePerOz;
+        const goldPricePerOz = parseNumber(buyQuoteData.goldPricePerOunce);
         const pendingDust = parseNumber(dustData.pendingAmount);
-        const walletUsdcBalance = await getWalletUsdcBalance(resolvedWalletAddress);
-        const pendingCount = Math.max(0, dustData.queueCount || 0);
-        const progressPercent =
-          pendingCount === 0
-            ? 0
-            : Math.min(95, Math.max(15, pendingCount * 15));
+        const usdcMint = process.env.NEXT_PUBLIC_USDC_MINT || DEFAULT_DEVNET_USDC_MINT;
+        const goldMint = process.env.NEXT_PUBLIC_GOLD_MINT || DEFAULT_DEVNET_GOLD_MINT;
+        const [walletUsdcBalance, walletGoldBalance] = await Promise.all([
+          getWalletTokenBalance(resolvedWalletAddress, usdcMint),
+          getWalletTokenBalance(resolvedWalletAddress, goldMint),
+        ]);
+
+        const onChainGoldOz = walletGoldBalance > 0 ? walletGoldBalance : goldOz;
+        const totalGoldUsd = onChainGoldOz * goldPricePerOz;
 
         setDashboardData({
-          totalGoldOz: goldOz,
+          totalGoldOz: onChainGoldOz,
           totalGoldUsd,
           walletDustUsd: walletUsdcBalance,
-          batchPendingCount: pendingCount,
           goldPricePerOz,
-          progressPercent,
+        });
+
+        setBuyEstimate({
+          usdcAmount: buyQuoteData.usdcAmount,
+          goldAmount: buyQuoteData.goldAmount,
+          stale: buyQuoteData.stale,
+          source: buyQuoteData.source,
+          updatedAt: buyQuoteData.timestamp,
         });
 
         setConvertInput((prev) => {
@@ -216,7 +267,167 @@ export default function DashboardPage() {
     return () => {
       cancelled = true;
     };
+  }, [
+    api,
+    canAccessScreen,
+    ready,
+    registrationGate,
+    resolvedWalletAddress,
+    walletsReady,
+  ]);
+
+  useEffect(() => {
+    if (!ready || !walletsReady || !resolvedWalletAddress || !canAccessScreen) {
+      return;
+    }
+
+    let cancelled = false;
+
+    async function checkRegistrationGate() {
+      try {
+        const profile = await api.getUserProfile(resolvedWalletAddress);
+        if (cancelled) {
+          return;
+        }
+        setRegistrationGate(profile.grailLinked ? "registered" : "unregistered");
+      } catch {
+        if (!cancelled) {
+          setRegistrationGate("unregistered");
+        }
+      }
+    }
+
+    void checkRegistrationGate();
+
+    return () => {
+      cancelled = true;
+    };
   }, [api, canAccessScreen, ready, resolvedWalletAddress, walletsReady]);
+
+  useEffect(() => {
+    if (
+      registrationGate !== "registered" ||
+      !resolvedWalletAddress ||
+      !canAccessScreen ||
+      !ready ||
+      !walletsReady
+    ) {
+      return;
+    }
+
+    let cancelled = false;
+
+    async function refreshBalances() {
+      try {
+        const usdcMint = process.env.NEXT_PUBLIC_USDC_MINT || DEFAULT_DEVNET_USDC_MINT;
+        const goldMint = process.env.NEXT_PUBLIC_GOLD_MINT || DEFAULT_DEVNET_GOLD_MINT;
+        const [walletUsdcBalance, walletGoldBalance, buyQuoteData] = await Promise.all([
+          getWalletTokenBalance(resolvedWalletAddress, usdcMint),
+          getWalletTokenBalance(resolvedWalletAddress, goldMint),
+          api.getBuyQuote(1),
+        ]);
+
+        if (cancelled) {
+          return;
+        }
+
+        setDashboardData((prev) => {
+          const totalGoldOz = walletGoldBalance > 0 ? walletGoldBalance : prev.totalGoldOz;
+          const goldPricePerOz = parseNumber(buyQuoteData.goldPricePerOunce);
+          return {
+            ...prev,
+            walletDustUsd: walletUsdcBalance,
+            totalGoldOz,
+            goldPricePerOz,
+            totalGoldUsd: totalGoldOz * goldPricePerOz,
+          };
+        });
+      } catch {
+        // Keep existing values when periodic refresh fails.
+      }
+    }
+
+    const intervalId = window.setInterval(() => {
+      void refreshBalances();
+    }, 15000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, [
+    api,
+    canAccessScreen,
+    ready,
+    registrationGate,
+    resolvedWalletAddress,
+    walletsReady,
+  ]);
+
+  const convertAmount = useMemo(
+    () => parseInputAmount(convertInput),
+    [convertInput],
+  );
+  useEffect(() => {
+    if (
+      registrationGate !== "registered" ||
+      !canAccessScreen ||
+      !ready ||
+      !walletsReady ||
+      convertAmount <= 0
+    ) {
+      return;
+    }
+
+    let cancelled = false;
+
+    async function updateBuyEstimate() {
+      try {
+        const quote = await api.getBuyQuote(convertAmount);
+        if (cancelled) {
+          return;
+        }
+        setBuyEstimate({
+          usdcAmount: quote.usdcAmount,
+          goldAmount: quote.goldAmount,
+          stale: quote.stale,
+          source: quote.source,
+          updatedAt: quote.timestamp,
+        });
+        setDashboardData((prev) => ({
+          ...prev,
+          goldPricePerOz: parseNumber(quote.goldPricePerOunce),
+        }));
+      } catch {
+        // Keep last estimate if a refresh fails.
+      }
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      void updateBuyEstimate();
+    }, 250);
+
+    const intervalId = window.setInterval(() => {
+      void updateBuyEstimate();
+    }, 6000);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timeoutId);
+      window.clearInterval(intervalId);
+    };
+  }, [api, canAccessScreen, convertAmount, ready, registrationGate, walletsReady]);
+
+  const estimatedGold = useMemo(() => {
+    if (convertAmount <= 0) {
+      return 0;
+    }
+    return buyEstimate.goldAmount > 0
+      ? buyEstimate.goldAmount
+      : dashboardData.goldPricePerOz > 0
+        ? convertAmount / dashboardData.goldPricePerOz
+        : 0;
+  }, [buyEstimate.goldAmount, convertAmount, dashboardData.goldPricePerOz]);
 
   async function handleConfirmDeposit() {
     setError(null);
@@ -234,9 +445,7 @@ export default function DashboardPage() {
       return;
     }
 
-    const normalizedInput = convertInput.replace(/,/g, "").trim();
-    const usdcAmount = Number(normalizedInput);
-    if (!Number.isFinite(usdcAmount) || usdcAmount <= 0) {
+    if (convertAmount <= 0) {
       setError("Enter a valid USDC amount greater than 0");
       return;
     }
@@ -245,19 +454,116 @@ export default function DashboardPage() {
     try {
       const intent = await api.createSelfPurchaseIntent(
         resolvedWalletAddress,
-        usdcAmount,
+        convertAmount,
         20,
         true,
         false,
       );
       setPurchaseActionMessage(
-        `Self-custody intent created (trade ${intent.trade.id}). Wallet signature + submit is required to finalize.`,
+        `Intent ${intent.trade.id} created. Sign and submit in wallet to receive gold.`,
       );
     } catch (actionError) {
       setError(formatError(actionError));
     } finally {
       setCreatingIntent(false);
     }
+  }
+
+  async function handleRegisterInGrail() {
+    setError(null);
+    setPurchaseActionMessage(null);
+
+    if (!resolvedWalletAddress) {
+      setError("Wallet not connected");
+      return;
+    }
+
+    setRegisteringUser(true);
+    try {
+      const result = await api.registerUserInGrail(resolvedWalletAddress);
+      setPurchaseActionMessage(
+        `GRAIL registration ${result.status}. You can now use self-custody purchase.`,
+      );
+      setRegistrationGate("registered");
+    } catch (registerError) {
+      setError(formatError(registerError));
+    } finally {
+      setRegisteringUser(false);
+    }
+  }
+
+  if (registrationGate === "checking") {
+    return (
+      <main className="dashboard-shell">
+        <section className="dashboard-frame">
+          <div className="dashboard-card">
+            <header className="dashboard-topbar">
+              <h1 className="dashboard-brand">AURUM</h1>
+              <p className="dashboard-wallet-status">
+                {resolvedWalletAddress
+                  ? shortenWalletAddress(resolvedWalletAddress)
+                  : "WALLET DISCONNECTED"}
+              </p>
+            </header>
+            <div className="dashboard-divider" />
+            <section className="dashboard-hero">
+              <p className="dashboard-kicker">CHECKING GRAIL REGISTRATION</p>
+              <p className="dashboard-value">Loading account state...</p>
+            </section>
+          </div>
+        </section>
+      </main>
+    );
+  }
+
+  if (registrationGate === "unregistered") {
+    return (
+      <main className="dashboard-shell">
+        <section className="dashboard-frame">
+          <div className="dashboard-card">
+            <header className="dashboard-topbar">
+              <h1 className="dashboard-brand">AURUM</h1>
+              <p className="dashboard-wallet-status">
+                {resolvedWalletAddress
+                  ? shortenWalletAddress(resolvedWalletAddress)
+                  : "WALLET DISCONNECTED"}
+              </p>
+            </header>
+
+            <div className="dashboard-divider" />
+
+            <section className="dashboard-hero">
+              <p className="dashboard-kicker">GRAIL REGISTRATION REQUIRED</p>
+              <p className="dashboard-value">Please register your wallet in GRAIL</p>
+              <p className="dashboard-held">
+                This is required before self-custody purchases.
+              </p>
+            </section>
+
+            <div className="dashboard-actions" style={{ marginTop: "auto" }}>
+              <button
+                type="button"
+                className="dashboard-button"
+                onClick={() => {
+                  void handleRegisterInGrail();
+                }}
+                disabled={registeringUser}
+              >
+                <span>{registeringUser ? "REGISTERING..." : "REGISTER IN GRAIL"}</span>
+                <span aria-hidden="true">→</span>
+              </button>
+              <p className="dashboard-footer">
+                {error
+                  ? `ERROR: ${error}`
+                  : purchaseActionMessage
+                    ? purchaseActionMessage
+                    : "COMPLETE REGISTRATION TO CONTINUE"}
+              </p>
+            </div>
+          </div>
+        </section>
+      </main>
+    );
   }
 
   return (
@@ -267,7 +573,9 @@ export default function DashboardPage() {
           <header className="dashboard-topbar">
             <h1 className="dashboard-brand">AURUM</h1>
             <p className="dashboard-wallet-status">
-              {canAccessScreen ? "WALLET CONNECTED" : "WALLET DISCONNECTED"}
+              {resolvedWalletAddress
+                ? shortenWalletAddress(resolvedWalletAddress)
+                : "WALLET DISCONNECTED"}
             </p>
           </header>
 
@@ -287,64 +595,32 @@ export default function DashboardPage() {
               })}{" "}
               USD
             </p>
+            <p className="dashboard-held">HELD IN YOUR WALLET</p>
           </section>
 
           <div className="dashboard-divider" />
 
           <section className="dashboard-stats" aria-label="tokenization stats">
             <article className="dashboard-stat">
-              <p className="dashboard-stat-label">WALLET DUST</p>
+              <p className="dashboard-stat-label">USDC BALANCE</p>
               <p className="dashboard-stat-value">
+                $
                 {dashboardData.walletDustUsd.toLocaleString(undefined, {
                   minimumFractionDigits: 2,
                   maximumFractionDigits: 2,
-                })}{" "}
-                $
+                })}
               </p>
             </article>
             <article className="dashboard-stat dashboard-stat-right">
-              <p className="dashboard-stat-label">BATCH PENDING</p>
-              <p className="dashboard-stat-value">
-                {dashboardData.batchPendingCount}
-              </p>
-            </article>
-            <article className="dashboard-stat dashboard-stat-bottom">
-              <p className="dashboard-stat-label">GOLD PRICE</p>
+              <p className="dashboard-stat-label">GOLD PRICE / OZ</p>
               <p className="dashboard-stat-value">
                 $
                 {dashboardData.goldPricePerOz.toLocaleString(undefined, {
                   minimumFractionDigits: 2,
                   maximumFractionDigits: 2,
-                })}{" "}
+                })}
               </p>
             </article>
-            <article className="dashboard-stat dashboard-stat-right dashboard-stat-bottom">
-              <p className="dashboard-stat-label">NEXT BATCH</p>
-              <p className="dashboard-stat-value">
-                {formatNextBatch(nextBatchSeconds)}
-              </p>
-            </article>
-          </section>
-
-          <div className="dashboard-divider" />
-
-          <section className="dashboard-progress">
-            <div className="dashboard-progress-row">
-              <p className="dashboard-progress-label">
-                {dashboardData.batchPendingCount > 0
-                  ? "BATCH PROCESSING"
-                  : "NO ACTIVE BATCH"}
-              </p>
-              <p className="dashboard-progress-percent">
-                {dashboardData.progressPercent}%
-              </p>
-            </div>
-            <div className="dashboard-progress-track" aria-hidden="true">
-              <div
-                className="dashboard-progress-fill"
-                style={{ width: `${dashboardData.progressPercent}%` }}
-              />
-            </div>
           </section>
 
           <div className="dashboard-divider" />
@@ -369,13 +645,33 @@ export default function DashboardPage() {
               />
               <p className="dashboard-convert-unit">USDC</p>
             </div>
+            <div className="dashboard-meta">
+              <div className="dashboard-meta-row">
+                <p className="dashboard-meta-label">ESTIMATED GOLD</p>
+                <p className="dashboard-meta-value">
+                  ~ {estimatedGold.toFixed(6)} OZ
+                </p>
+              </div>
+              <div className="dashboard-meta-row">
+                <p className="dashboard-meta-label">NETWORK FEE</p>
+                <p className="dashboard-meta-value">
+                  ${FALLBACK_NETWORK_FEE_USD.toFixed(2)}
+                </p>
+              </div>
+              <div className="dashboard-meta-row">
+                <p className="dashboard-meta-label">EXECUTION</p>
+                <p className="dashboard-meta-value">INSTANT</p>
+              </div>
+            </div>
           </section>
 
           <div className="dashboard-actions">
             <button
               type="button"
               className="dashboard-button"
-              disabled={loading || creatingIntent || purchaseMode === "custodial"}
+              disabled={
+                loading || creatingIntent || purchaseMode === "custodial"
+              }
               onClick={() => {
                 void handleConfirmDeposit();
               }}
@@ -384,7 +680,7 @@ export default function DashboardPage() {
                 {creatingIntent
                   ? "CREATING INTENT..."
                   : purchaseMode === "self_custody"
-                    ? "START SELF-CUSTODY PURCHASE"
+                    ? "CONVERT TO GOLD"
                     : "CUSTODIAL MODE (DISABLED)"}
               </span>
               <span aria-hidden="true">→</span>
@@ -397,8 +693,10 @@ export default function DashboardPage() {
                   : purchaseActionMessage
                     ? purchaseActionMessage
                     : purchaseMode === "custodial"
-                      ? "MODE: CUSTODIAL (FALLBACK ONLY) · POWERED BY GRAIL"
-                      : "MODE: SELF-CUSTODY (PRIMARY) · POWERED BY GRAIL"}
+                      ? "CUSTODIAL FALLBACK MODE"
+                      : buyEstimate.stale
+                        ? "QUOTE SOURCE: FALLBACK CACHE"
+                        : "POWERED BY GRAIL"}
             </p>
           </div>
         </div>

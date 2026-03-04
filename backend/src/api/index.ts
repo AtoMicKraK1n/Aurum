@@ -2,6 +2,8 @@ import { Router } from "express";
 import { connectWallet } from "./auth/connect";
 import { createAuthNonceChallenge } from "./auth/nonce";
 import { getUserBalance } from "./user/balance";
+import { getUserProfile } from "./user/profile";
+import { registerUserInGrail } from "./user/register-grail";
 import { queueDust } from "./dust/queue";
 import { getDustStatus } from "./dust/status";
 import { runBatchNow } from "./admin/batch";
@@ -17,6 +19,8 @@ const router = Router();
 
 router.post("/auth/nonce", createAuthNonceChallenge);
 router.post("/auth/connect", connectWallet);
+router.get("/user/profile", getUserProfile);
+router.post("/user/register-grail", registerUserInGrail);
 router.get("/user/balance", getUserBalance);
 router.post("/dust/queue", queueDust);
 router.get("/dust/status", getDustStatus);

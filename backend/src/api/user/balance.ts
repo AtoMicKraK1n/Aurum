@@ -3,6 +3,7 @@ import { Connection, PublicKey, LAMPORTS_PER_SOL } from "@solana/web3.js";
 import { db } from "../../db/queries";
 import { getGrailUserBalance } from "../../lib/grail/user";
 import { ApiResponse } from "../../types";
+import { ensureGrailProvisionedUser } from "../../lib/grail/provision";
 
 const connection = new Connection(process.env.SOLANA_RPC_URL!);
 
@@ -26,11 +27,7 @@ export async function getUserBalance(
       return;
     }
 
-    const user = await db.getUserByWallet(walletAddress);
-    if (!user) {
-      res.status(404).json({ success: false, error: "User not found" });
-      return;
-    }
+    const user = await db.createUser(walletAddress);
 
     const pubkey = new PublicKey(walletAddress);
     const lamports = await connection.getBalance(pubkey);
@@ -39,10 +36,23 @@ export async function getUserBalance(
     // Custodial ledger gold distributed by batch jobs.
     const goldBalance = await db.getGoldBalance(user.id);
 
+    // Auto-provision GRAIL linkage for existing app users that missed initial registration.
+    let linkedUser = user;
+    if (!linkedUser.grail_user_id) {
+      const provision = await ensureGrailProvisionedUser(user);
+      if (provision.status !== "failed") {
+        linkedUser = provision.user;
+      } else {
+        console.warn(
+          `GRAIL provisioning skipped in balance API for user ${user.id}: ${provision.error}`,
+        );
+      }
+    }
+
     // Optional on-chain GRAIL user account balance (can differ in custodial flow).
     let onChainGrailGold = 0;
-    if (user.grail_user_id) {
-      onChainGrailGold = await getGrailUserBalance(user.grail_user_id);
+    if (linkedUser.grail_user_id) {
+      onChainGrailGold = await getGrailUserBalance(linkedUser.grail_user_id);
     }
 
     res.json({

@@ -62,6 +62,18 @@ export type UserBalanceData = {
   };
 };
 
+export type UserProfileData = {
+  exists: boolean;
+  grailLinked: boolean;
+  user?: AurumUser;
+};
+
+export type RegisterUserInGrailData = {
+  status: "existing" | "created";
+  userId: string;
+  grailUserId: string;
+};
+
 export type RunBatchData = {
   batchId: string;
   totalUsdc: number;

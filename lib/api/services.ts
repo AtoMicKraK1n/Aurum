@@ -7,10 +7,12 @@ import {
   CreateDepositIntentData,
   DustStatusData,
   PurchaseConfigData,
+  RegisterUserInGrailData,
   RunBatchData,
   SellQuoteData,
   SelfPurchaseIntentData,
   UserBalanceData,
+  UserProfileData,
 } from "./types";
 
 export class AurumApiService {
@@ -59,6 +61,17 @@ export class AurumApiService {
   getUserBalance(walletAddress: string): Promise<UserBalanceData> {
     const query = encodeURIComponent(walletAddress);
     return this.client.get<UserBalanceData>(`/api/user/balance?walletAddress=${query}`);
+  }
+
+  getUserProfile(walletAddress: string): Promise<UserProfileData> {
+    const query = encodeURIComponent(walletAddress);
+    return this.client.get<UserProfileData>(`/api/user/profile?walletAddress=${query}`);
+  }
+
+  registerUserInGrail(walletAddress: string): Promise<RegisterUserInGrailData> {
+    return this.client.post<RegisterUserInGrailData>("/api/user/register-grail", {
+      walletAddress,
+    });
   }
 
   runBatch(adminKey: string): Promise<RunBatchData> {

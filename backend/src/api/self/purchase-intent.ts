@@ -3,6 +3,18 @@ import { db } from "../../db/queries";
 import { ApiResponse, SelfCustodyTrade } from "../../types";
 import { createSelfCustodyPurchaseIntent } from "../../lib/grail/purchase";
 import { isSelfCustodyEnabled } from "../../lib/purchase-mode";
+import { ensureGrailProvisionedUser } from "../../lib/grail/provision";
+import { registerGrailUser } from "../../lib/grail/user";
+
+function isGrailUserNotFoundError(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+  return (
+    error.message.includes("User not found") ||
+    error.message.includes('"error":"User not found"')
+  );
+}
 
 export async function createSelfPurchaseIntent(
   req: Request,
@@ -50,39 +62,75 @@ export async function createSelfPurchaseIntent(
       return;
     }
 
-    const user = await db.getUserByWallet(walletAddress);
-    if (!user) {
-      res.status(404).json({ success: false, error: "User not found" });
-      return;
-    }
+    const user = await db.createUser(walletAddress);
 
-    if (!user.grail_user_id) {
-      res.status(409).json({
+    const provision = await ensureGrailProvisionedUser(user);
+    if (provision.status === "failed") {
+      res.status(502).json({
         success: false,
-        error: "User is not linked to GRAIL",
+        error: `User GRAIL provisioning failed: ${provision.error}`,
       });
       return;
     }
+    let linkedUser = provision.user;
 
-    const intent = await createSelfCustodyPurchaseIntent(
-      user.grail_user_id,
-      usdcAmount,
-      typeof slippagePercent === "number" ? slippagePercent : 5,
+    const resolvedSlippagePercent =
+      typeof slippagePercent === "number" ? slippagePercent : 5;
+    const resolvedCosign =
       typeof cosign === "boolean"
         ? cosign
         : typeof co_sign === "boolean"
           ? co_sign
-          : false,
+          : false;
+    const resolvedUserAsFeePayer =
       typeof userAsFeePayer === "boolean"
         ? userAsFeePayer
         : typeof userAsfeepayer === "boolean"
           ? userAsfeepayer
-          : true,
-    );
+          : true;
+
+    let intent;
+    try {
+      intent = await createSelfCustodyPurchaseIntent(
+        linkedUser.grail_user_id as string,
+        usdcAmount,
+        resolvedSlippagePercent,
+        resolvedCosign,
+        resolvedUserAsFeePayer,
+      );
+    } catch (error) {
+      if (!isGrailUserNotFoundError(error)) {
+        throw error;
+      }
+
+      console.warn(
+        `Stale grail_user_id detected for user ${linkedUser.id}. Re-provisioning...`,
+      );
+      const reprovisioned = await registerGrailUser(linkedUser.wallet_address);
+      await db.updateGrailUser(
+        linkedUser.id,
+        reprovisioned.userId,
+        reprovisioned.userPda,
+      );
+
+      linkedUser = {
+        ...linkedUser,
+        grail_user_id: reprovisioned.userId,
+        grail_user_pda: reprovisioned.userPda,
+      };
+
+      intent = await createSelfCustodyPurchaseIntent(
+        linkedUser.grail_user_id as string,
+        usdcAmount,
+        resolvedSlippagePercent,
+        resolvedCosign,
+        resolvedUserAsFeePayer,
+      );
+    }
 
     const trade = await db.createSelfCustodyTrade({
-      userId: user.id,
-      grailUserId: user.grail_user_id,
+      userId: linkedUser.id,
+      grailUserId: linkedUser.grail_user_id as string,
       usdcAmount,
       estimatedGoldAmount: intent.goldAmount,
       maxUsdcAmount: intent.maxUsdcAmount,

@@ -26,7 +26,6 @@ export function PrivyAppProvider({ children }: { children: React.ReactNode }) {
             "phantom",
             "solflare",
             "backpack",
-            "detected_solana_wallets",
           ],
         },
         embeddedWallets: {

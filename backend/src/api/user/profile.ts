@@ -1,35 +1,42 @@
 import { Request, Response } from "express";
 import { db } from "../../db/queries";
-import { ApiResponse } from "../../types";
+import { ApiResponse, User } from "../../types";
 
-export async function getDustStatus(
+export async function getUserProfile(
   req: Request,
   res: Response<
-    ApiResponse<{ pendingAmount: number; queueCount: number; status: string }>
+    ApiResponse<{
+      exists: boolean;
+      grailLinked: boolean;
+      user?: User;
+    }>
   >,
 ): Promise<void> {
   try {
     const { walletAddress } = req.query;
-
     if (!walletAddress || typeof walletAddress !== "string") {
       res.status(400).json({ success: false, error: "walletAddress required" });
       return;
     }
 
-    const user = await db.createUser(walletAddress);
-
-    const userPending = await db.getUserPendingDust(user.id);
-    const totalPending = userPending.reduce(
-      (sum, d) => sum + Number(d.usdc_amount),
-      0,
-    );
+    const user = await db.getUserByWallet(walletAddress);
+    if (!user) {
+      res.json({
+        success: true,
+        data: {
+          exists: false,
+          grailLinked: false,
+        },
+      });
+      return;
+    }
 
     res.json({
       success: true,
       data: {
-        pendingAmount: totalPending,
-        queueCount: userPending.length,
-        status: userPending.length > 0 ? "pending" : "none",
+        exists: true,
+        grailLinked: Boolean(user.grail_user_id),
+        user,
       },
     });
   } catch (error) {
