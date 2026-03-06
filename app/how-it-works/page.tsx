@@ -4,7 +4,7 @@ import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { usePrivy, useWallets } from "@privy-io/react-auth";
 import { useAuthState } from "@/lib/state/auth-context";
-import { Briefcase, DollarSign, Loader } from "lucide-react";
+import { Briefcase, PenSquare, Wallet } from "lucide-react";
 
 export default function HowItWorksPage() {
   const router = useRouter();
@@ -39,12 +39,26 @@ export default function HowItWorksPage() {
     router.replace("/");
   }
 
+  async function handleBrandHome() {
+    await logout();
+    reset();
+    router.replace("/");
+  }
+
   return (
     <main className="how-shell">
       <section className="how-frame">
         <div className="how-card">
           <header className="how-topbar">
-            <h1 className="how-brand">AURUM</h1>
+            <button
+              type="button"
+              className="how-brand how-brand-button"
+              onClick={() => {
+                void handleBrandHome();
+              }}
+            >
+              AURUM
+            </button>
             <p className="how-wallet-status">
               {canAccessScreen ? "WALLET CONNECTED" : "WALLET DISCONNECTED"}
             </p>
@@ -54,26 +68,28 @@ export default function HowItWorksPage() {
 
           <div className="how-body">
             <h2 className="how-title">How it works</h2>
-            <p className="how-subtitle">Automated gold accumulation protocol</p>
+            <p className="how-subtitle">Turn dust into gold purchase flow</p>
 
             <article className="how-step">
               <div className="how-step-icon" aria-hidden="true">
-                <DollarSign size={15} strokeWidth={1.75} />
+                <Wallet size={15} strokeWidth={1.75} />
               </div>
               <div className="how-step-copy">
-                <h3 className="how-step-title">DEPOSIT DUST</h3>
-                <p className="how-step-subtitle">Convert idle small balances</p>
+                <h3 className="how-step-title">CONNECT WALLET</h3>
+                <p className="how-step-subtitle">
+                  Link your Solana wallet to Aurum
+                </p>
               </div>
             </article>
 
             <article className="how-step">
               <div className="how-step-icon" aria-hidden="true">
-                <Loader size={15} strokeWidth={1.75} />
+                <PenSquare size={15} strokeWidth={1.75} />
               </div>
               <div className="how-step-copy">
-                <h3 className="how-step-title">DAILY BATCH</h3>
+                <h3 className="how-step-title">SIGN PURCHASE</h3>
                 <p className="how-step-subtitle">
-                  Pooled zero-slippage execution
+                  Review availbe dust and approve each transaction in-wallet
                 </p>
               </div>
             </article>
@@ -83,8 +99,10 @@ export default function HowItWorksPage() {
                 <Briefcase size={15} strokeWidth={1.75} />
               </div>
               <div className="how-step-copy">
-                <h3 className="how-step-title">RECEIVE GOLD</h3>
-                <p className="how-step-subtitle">100% backed tokenized gold</p>
+                <h3 className="how-step-title">RECEIVE TOKENIZED GOLD</h3>
+                <p className="how-step-subtitle">
+                  Gold settles directly to your wallet
+                </p>
               </div>
             </article>
           </div>

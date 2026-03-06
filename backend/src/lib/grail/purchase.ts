@@ -57,6 +57,24 @@ function getMissingSignerPubkeys(
     .map(({ key }) => key);
 }
 
+function extractTxSignatureFromSignedTx(
+  tx: Transaction | VersionedTransaction,
+): string {
+  if (tx instanceof Transaction) {
+    const signature = tx.signature;
+    if (signature && !signature.every((byte) => byte === 0)) {
+      return bs58.encode(signature);
+    }
+    return "";
+  }
+
+  const firstSignature = tx.signatures[0];
+  if (firstSignature && !firstSignature.every((byte) => byte === 0)) {
+    return bs58.encode(firstSignature);
+  }
+  return "";
+}
+
 async function signAndSendTransaction(
   tx: Transaction | VersionedTransaction,
   extraSigners: Keypair[] = [],
@@ -203,16 +221,17 @@ export async function createSelfCustodyPurchaseIntent(
     const { goldAmount, estimatedUsdcAmount } =
       await estimateGoldPurchase(usdcAmount);
     const maxUsdcAmount = estimatedUsdcAmount * (1 + slippagePercent / 100);
+    const requestBody = {
+      userId,
+      goldAmount,
+      maxUsdcAmount,
+      co_sign: cosign,
+      userAsFeePayer,
+    };
 
     const response = await axios.post(
       `${GRAIL_API}/api/trading/purchases/user`,
-      {
-        userId,
-        goldAmount,
-        maxUsdcAmount,
-        co_sign: cosign,
-        userAsFeePayer,
-      },
+      requestBody,
       {
         headers: {
           "Content-Type": "application/json",
@@ -245,32 +264,86 @@ export async function createSelfCustodyPurchaseIntent(
 export async function submitSignedSelfCustodyTransaction(
   signedSerializedTx: string,
 ): Promise<string> {
-  const response = await axios.post(
-    `${GRAIL_API}/api/transactions/submit`,
-    {
-      signedTransaction: signedSerializedTx,
-    },
-    {
-      headers: {
-        "Content-Type": "application/json",
-        "x-api-key": GRAIL_API_KEY,
+  try {
+    const tx = deserializeAnyTransaction(signedSerializedTx);
+    const requiredSigners = getRequiredSignerPubkeys(tx);
+    const executivePubkey = executiveAuthority.publicKey.toBase58();
+    const requiresExecutiveSignature = requiredSigners.includes(executivePubkey);
+
+    // Add executive signature only when the transaction actually requires it.
+    if (requiresExecutiveSignature) {
+      if (tx instanceof Transaction) {
+        tx.partialSign(executiveAuthority);
+      } else {
+        tx.sign([executiveAuthority]);
+      }
+    }
+
+    const missingSigners = getMissingSignerPubkeys(tx);
+    if (missingSigners.length > 0) {
+      throw new Error(
+        `Missing required signatures before submit. required=[${requiredSigners.join(", ")}] missing=[${missingSigners.join(", ")}]`,
+      );
+    }
+
+    const signedPayloadBase64 = Buffer.from(tx.serialize()).toString("base64");
+
+    const response = await axios.post(
+      `${GRAIL_API}/api/transactions/submit`,
+      {
+        signedTransaction: signedPayloadBase64,
       },
-    },
-  );
+      {
+        headers: {
+          "Content-Type": "application/json",
+          "x-api-key": GRAIL_API_KEY,
+        },
+      },
+    );
 
-  const data = response.data?.data || {};
-  const txSignature = String(
-    data.txSignature ??
-      data.transactionSignature ??
-      data.signature ??
-      "",
-  );
+    const topLevel = response.data || {};
+    const nestedData = topLevel.data || {};
+    const txSignature = String(
+      nestedData.txSignature ??
+        nestedData.transactionSignature ??
+        nestedData.signature ??
+        nestedData.txid ??
+        nestedData.transactionHash ??
+        nestedData.txHash ??
+        topLevel.txSignature ??
+        topLevel.transactionSignature ??
+        topLevel.signature ??
+        topLevel.txid ??
+        topLevel.transactionHash ??
+        topLevel.txHash ??
+        "",
+    );
 
-  if (!txSignature) {
+    if (txSignature) {
+      return txSignature;
+    }
+
+    const localTxSignature = extractTxSignatureFromSignedTx(tx);
+    if (localTxSignature) {
+      console.warn(
+        "Grail submit response had no signature field; using signature from signed transaction payload.",
+      );
+      return localTxSignature;
+    }
+
     throw new Error("Missing transaction signature from Grail submit response");
+  } catch (error) {
+    if (axios.isAxiosError(error)) {
+      const detail =
+        typeof error.response?.data === "string"
+          ? error.response.data
+          : JSON.stringify(error.response?.data);
+      throw new Error(
+        `Failed to submit signed self-custody transaction: ${error.message}${detail ? ` | ${detail}` : ""}`,
+      );
+    }
+    throw error;
   }
-
-  return txSignature;
 }
 
 export async function purchaseGoldPartner(

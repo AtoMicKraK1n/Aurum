@@ -113,3 +113,18 @@ export type SelfPurchaseIntentData = {
   signingInstructions?: unknown;
   status?: string;
 };
+
+export type SelfPurchaseSubmitData = {
+  tradeId: string;
+  txSignature: string;
+  status: "completed";
+};
+
+export type DustSweepSettingsData = {
+  enabled: boolean;
+  minSweepUsdc: number;
+  maxSweepUsdc: number;
+  slippagePercent: number;
+  cooldownMinutes: number;
+  updatedAt: string;
+};

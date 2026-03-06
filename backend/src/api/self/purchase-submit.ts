@@ -48,6 +48,18 @@ export async function submitSelfPurchase(
     }
 
     if (trade.status !== "pending") {
+      if (trade.status === "completed" && trade.submitted_tx_signature) {
+        res.json({
+          success: true,
+          data: {
+            tradeId,
+            txSignature: trade.submitted_tx_signature,
+            status: "completed",
+          },
+        });
+        return;
+      }
+
       res.status(409).json({
         success: false,
         error: `Trade already ${trade.status}`,
@@ -74,7 +86,14 @@ export async function submitSelfPurchase(
         },
       });
     } catch (error) {
-      await db.failSelfCustodyTrade(tradeId, (error as Error).message);
+      try {
+        await db.failSelfCustodyTrade(tradeId, (error as Error).message);
+      } catch (markFailedError) {
+        console.error(
+          "Failed to mark self-custody trade as failed:",
+          markFailedError,
+        );
+      }
       throw error;
     }
   } catch (error) {

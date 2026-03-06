@@ -4,6 +4,7 @@ import dotenv from "dotenv";
 import apiRoutes from "./api";
 import { runBatchConversion } from "./lib/batch/converter";
 import { db } from "./db/queries";
+import { runDustSweepCycle } from "./lib/dust/sweep-cron";
 
 dotenv.config();
 
@@ -58,6 +59,8 @@ app.use(
 let isCronBatchRunning = false;
 let cronTimeout: NodeJS.Timeout | undefined;
 let cronInterval: NodeJS.Timeout | undefined;
+let isDustSweepRunning = false;
+let dustSweepInterval: NodeJS.Timeout | undefined;
 
 async function runScheduledBatch(): Promise<void> {
   if (isCronBatchRunning) {
@@ -123,9 +126,52 @@ function startBatchCron(): void {
   }, delay);
 }
 
+async function runScheduledDustSweep(): Promise<void> {
+  if (isDustSweepRunning) {
+    console.log("Skipping dust sweep run; previous run still active");
+    return;
+  }
+
+  isDustSweepRunning = true;
+  try {
+    const result = await runDustSweepCycle();
+    if (result.checkedUsers > 0 || result.intentCreated > 0) {
+      console.log(
+        `Dust sweep run completed: checked=${result.checkedUsers}, intents=${result.intentCreated}`,
+      );
+    }
+  } catch (error) {
+    console.error("Dust sweep run failed:", error);
+  } finally {
+    isDustSweepRunning = false;
+  }
+}
+
+function startDustSweepCron(): void {
+  const enabled = process.env.ENABLE_DUST_SWEEP_CRON === "true";
+  if (!enabled) {
+    console.log("Dust sweep cron disabled (ENABLE_DUST_SWEEP_CRON is not true)");
+    return;
+  }
+
+  const intervalSeconds = Number(process.env.DUST_SWEEP_INTERVAL_SECONDS || 60);
+  const intervalMs =
+    Number.isFinite(intervalSeconds) && intervalSeconds > 0
+      ? intervalSeconds * 1000
+      : 60_000;
+
+  console.log(`Dust sweep cron enabled: interval=${Math.round(intervalMs / 1000)}s`);
+
+  void runScheduledDustSweep();
+  dustSweepInterval = setInterval(() => {
+    void runScheduledDustSweep();
+  }, intervalMs);
+}
+
 app.listen(PORT, () => {
   console.log(`Aurum API running on http://localhost:${PORT}`);
   startBatchCron();
+  startDustSweepCron();
 });
 
 process.on("SIGINT", () => {
@@ -134,6 +180,9 @@ process.on("SIGINT", () => {
   }
   if (cronInterval) {
     clearInterval(cronInterval);
+  }
+  if (dustSweepInterval) {
+    clearInterval(dustSweepInterval);
   }
   process.exit(0);
 });

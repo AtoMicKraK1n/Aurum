@@ -10,7 +10,9 @@ import {
   RegisterUserInGrailData,
   RunBatchData,
   SellQuoteData,
+  DustSweepSettingsData,
   SelfPurchaseIntentData,
+  SelfPurchaseSubmitData,
   UserBalanceData,
   UserProfileData,
 } from "./types";
@@ -96,9 +98,14 @@ export class AurumApiService {
     walletAddress: string,
     usdcAmount: number,
     slippagePercent: number = 20,
-    coSign: boolean = true,
-    userAsFeePayer: boolean = false,
+    options?: {
+      coSign?: boolean;
+      userAsFeePayer?: boolean;
+    },
   ): Promise<SelfPurchaseIntentData> {
+    const coSign = options?.coSign ?? false;
+    const userAsFeePayer = options?.userAsFeePayer ?? true;
+
     return this.client.post<SelfPurchaseIntentData>("/api/self/purchase-intent", {
       walletAddress,
       usdcAmount,
@@ -106,6 +113,34 @@ export class AurumApiService {
       co_sign: coSign,
       userAsFeePayer,
     });
+  }
+
+  submitSelfPurchase(
+    tradeId: string,
+    signedSerializedTx: string,
+  ): Promise<SelfPurchaseSubmitData> {
+    return this.client.post<SelfPurchaseSubmitData>("/api/self/purchase-submit", {
+      tradeId,
+      signedSerializedTx,
+    });
+  }
+
+  getDustSweepSettings(walletAddress: string): Promise<DustSweepSettingsData> {
+    const query = encodeURIComponent(walletAddress);
+    return this.client.get<DustSweepSettingsData>(
+      `/api/dust/sweep/settings?walletAddress=${query}`,
+    );
+  }
+
+  upsertDustSweepSettings(input: {
+    walletAddress: string;
+    enabled: boolean;
+    minSweepUsdc: number;
+    maxSweepUsdc: number;
+    slippagePercent: number;
+    cooldownMinutes: number;
+  }): Promise<DustSweepSettingsData> {
+    return this.client.post<DustSweepSettingsData>("/api/dust/sweep/settings", input);
   }
 }
 

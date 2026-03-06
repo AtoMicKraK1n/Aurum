@@ -69,6 +69,37 @@ export interface WalletAuthNonce {
   created_at: Date;
 }
 
+export interface DustSweepSettings {
+  user_id: string;
+  enabled: boolean;
+  min_sweep_usdc: number;
+  max_sweep_usdc: number;
+  slippage_percent: number;
+  cooldown_minutes: number;
+  created_at: Date;
+  updated_at: Date;
+}
+
+export interface DustSweepRun {
+  id: string;
+  user_id: string;
+  status:
+    | "queued"
+    | "intent_created"
+    | "signed"
+    | "submitted"
+    | "failed"
+    | "skipped";
+  trigger_amount_usdc: number;
+  sweep_amount_usdc: number;
+  trade_id?: string;
+  tx_signature?: string;
+  error_message?: string;
+  metadata?: Record<string, unknown>;
+  created_at: Date;
+  updated_at: Date;
+}
+
 export interface ApiResponse<T = unknown> {
   success: boolean;
   data?: T;

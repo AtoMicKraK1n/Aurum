@@ -97,10 +97,13 @@ export async function registerGrailUser(walletAddress: string): Promise<{
     console.error("GRAIL user registration failed:", error);
 
     if (axios.isAxiosError(error)) {
-      const responseError = String(error.response?.data?.error || "");
+      const responseDetail =
+        typeof error.response?.data === "string"
+          ? error.response.data
+          : JSON.stringify(error.response?.data || {});
       if (
         error.response?.status === 400 &&
-        responseError.toLowerCase().includes("already exists")
+        /already exists/i.test(responseDetail)
       ) {
         const resolved = await findExistingGrailUserByWallet(walletAddress);
         if (resolved) {
@@ -114,22 +117,14 @@ export async function registerGrailUser(walletAddress: string): Promise<{
           };
         }
 
-        // Last-resort fallback: many integrations use wallet address as userId.
-        // If this assumption is wrong, downstream calls will return "User not found".
-        return {
-          userId: walletAddress.trim(),
-          userPda: walletAddress.trim(),
-          txSignature: "existing_user_wallet_fallback",
-        };
+        throw new Error(
+          `GRAIL reports user already exists but lookup by wallet failed for ${walletAddress.trim()}`,
+        );
       }
 
-      const detail =
-        typeof error.response?.data === "string"
-          ? error.response.data
-          : JSON.stringify(error.response?.data);
       console.error("Response:", error.response?.data);
       throw new Error(
-        `Failed to register user in GRAIL: ${error.message}${detail ? ` | ${detail}` : ""}`,
+        `Failed to register user in GRAIL: ${error.message}${responseDetail ? ` | ${responseDetail}` : ""}`,
       );
     }
 
@@ -240,6 +235,9 @@ export async function getGrailUserBalance(userId: string): Promise<number> {
 
     return response.data.data.balancesManagedByProgram?.gold?.amount || 0;
   } catch (error) {
+    if (axios.isAxiosError(error) && error.response?.status === 404) {
+      return 0;
+    }
     console.error("Failed to get GRAIL balance:", error);
     return 0;
   }

@@ -6,6 +6,8 @@ import {
   DepositIntent,
   SelfCustodyTrade,
   WalletAuthNonce,
+  DustSweepSettings,
+  DustSweepRun,
 } from "../types";
 
 const BATCH_LOCK_KEY = 7249001;
@@ -212,15 +214,36 @@ export const db = {
     signedSerializedTx: string;
     submittedTxSignature: string;
   }): Promise<void> {
-    await pool.query(
-      `UPDATE self_custody_trades
-       SET signed_serialized_tx = $2,
-           submitted_tx_signature = $3,
-           status = 'completed',
-           updated_at = NOW()
-       WHERE id = $1`,
-      [input.tradeId, input.signedSerializedTx, input.submittedTxSignature],
-    );
+    try {
+      await pool.query(
+        `UPDATE self_custody_trades
+         SET signed_serialized_tx = $2,
+             submitted_tx_signature = $3,
+             status = 'completed',
+             updated_at = NOW()
+         WHERE id = $1`,
+        [input.tradeId, input.signedSerializedTx, input.submittedTxSignature],
+      );
+    } catch (error) {
+      const pgError = error as { code?: string; message?: string };
+      const missingColumn =
+        pgError.code === "42703" ||
+        pgError.message?.includes("signed_serialized_tx") ||
+        pgError.message?.includes("submitted_tx_signature");
+
+      if (!missingColumn) {
+        throw error;
+      }
+
+      // Backward compatibility for environments with older schema.
+      await pool.query(
+        `UPDATE self_custody_trades
+         SET status = 'completed',
+             updated_at = NOW()
+         WHERE id = $1`,
+        [input.tradeId],
+      );
+    }
   },
 
   async failSelfCustodyTrade(tradeId: string, errorMessage: string): Promise<void> {
@@ -380,5 +403,209 @@ export const db = {
       [grailUserId],
     );
     return rows[0] || null;
+  },
+
+  async getDustSweepSettings(userId: string): Promise<DustSweepSettings | null> {
+    const { rows } = await pool.query<DustSweepSettings>(
+      "SELECT * FROM dust_sweep_settings WHERE user_id = $1",
+      [userId],
+    );
+    return rows[0] || null;
+  },
+
+  async upsertDustSweepSettings(input: {
+    userId: string;
+    enabled: boolean;
+    minSweepUsdc: number;
+    maxSweepUsdc: number;
+    slippagePercent: number;
+    cooldownMinutes: number;
+  }): Promise<DustSweepSettings> {
+    const { rows } = await pool.query<DustSweepSettings>(
+      `INSERT INTO dust_sweep_settings (
+         user_id,
+         enabled,
+         min_sweep_usdc,
+         max_sweep_usdc,
+         slippage_percent,
+         cooldown_minutes
+       ) VALUES ($1, $2, $3, $4, $5, $6)
+       ON CONFLICT (user_id)
+       DO UPDATE SET
+         enabled = EXCLUDED.enabled,
+         min_sweep_usdc = EXCLUDED.min_sweep_usdc,
+         max_sweep_usdc = EXCLUDED.max_sweep_usdc,
+         slippage_percent = EXCLUDED.slippage_percent,
+         cooldown_minutes = EXCLUDED.cooldown_minutes,
+         updated_at = NOW()
+       RETURNING *`,
+      [
+        input.userId,
+        input.enabled,
+        input.minSweepUsdc,
+        input.maxSweepUsdc,
+        input.slippagePercent,
+        input.cooldownMinutes,
+      ],
+    );
+    return rows[0];
+  },
+
+  async listDustSweepRuns(userId: string, limit: number): Promise<DustSweepRun[]> {
+    const { rows } = await pool.query<DustSweepRun>(
+      `SELECT *
+       FROM dust_sweep_runs
+       WHERE user_id = $1
+       ORDER BY created_at DESC
+       LIMIT $2`,
+      [userId, limit],
+    );
+    return rows;
+  },
+
+  async getLatestDustSweepRun(userId: string): Promise<DustSweepRun | null> {
+    const { rows } = await pool.query<DustSweepRun>(
+      `SELECT *
+       FROM dust_sweep_runs
+       WHERE user_id = $1
+       ORDER BY created_at DESC
+       LIMIT 1`,
+      [userId],
+    );
+    return rows[0] || null;
+  },
+
+  async getEnabledDustSweepUsers(): Promise<
+    Array<{
+      user_id: string;
+      wallet_address: string;
+      grail_user_id?: string;
+      enabled: boolean;
+      min_sweep_usdc: number;
+      max_sweep_usdc: number;
+      slippage_percent: number;
+      cooldown_minutes: number;
+    }>
+  > {
+    const { rows } = await pool.query<{
+      user_id: string;
+      wallet_address: string;
+      grail_user_id?: string;
+      enabled: boolean;
+      min_sweep_usdc: number;
+      max_sweep_usdc: number;
+      slippage_percent: number;
+      cooldown_minutes: number;
+    }>(
+      `SELECT
+         s.user_id,
+         u.wallet_address,
+         u.grail_user_id,
+         s.enabled,
+         s.min_sweep_usdc,
+         s.max_sweep_usdc,
+         s.slippage_percent,
+         s.cooldown_minutes
+       FROM dust_sweep_settings s
+       JOIN users u ON u.id = s.user_id
+       WHERE s.enabled = TRUE`,
+    );
+    return rows;
+  },
+
+  async hasPendingSelfCustodyTrade(userId: string): Promise<boolean> {
+    const { rows } = await pool.query<{ exists: boolean }>(
+      `SELECT EXISTS (
+         SELECT 1
+         FROM self_custody_trades
+         WHERE user_id = $1 AND status = 'pending'
+       ) AS exists`,
+      [userId],
+    );
+    return Boolean(rows[0]?.exists);
+  },
+
+  async createDustSweepRun(input: {
+    userId: string;
+    status: DustSweepRun["status"];
+    triggerAmountUsdc: number;
+    sweepAmountUsdc: number;
+    tradeId?: string;
+    txSignature?: string;
+    errorMessage?: string;
+    metadata?: Record<string, unknown>;
+  }): Promise<DustSweepRun> {
+    const { rows } = await pool.query<DustSweepRun>(
+      `INSERT INTO dust_sweep_runs (
+         user_id,
+         status,
+         trigger_amount_usdc,
+         sweep_amount_usdc,
+         trade_id,
+         tx_signature,
+         error_message,
+         metadata
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb)
+       RETURNING *`,
+      [
+        input.userId,
+        input.status,
+        input.triggerAmountUsdc,
+        input.sweepAmountUsdc,
+        input.tradeId || null,
+        input.txSignature || null,
+        input.errorMessage || null,
+        JSON.stringify(input.metadata || {}),
+      ],
+    );
+    return rows[0];
+  },
+
+  async updateDustSweepRun(
+    runId: string,
+    updates: {
+      status?: DustSweepRun["status"];
+      tradeId?: string;
+      txSignature?: string;
+      errorMessage?: string;
+      metadata?: Record<string, unknown>;
+    },
+  ): Promise<void> {
+    const fields: string[] = [];
+    const values: unknown[] = [runId];
+
+    if (updates.status !== undefined) {
+      values.push(updates.status);
+      fields.push(`status = $${values.length}`);
+    }
+    if (updates.tradeId !== undefined) {
+      values.push(updates.tradeId);
+      fields.push(`trade_id = $${values.length}`);
+    }
+    if (updates.txSignature !== undefined) {
+      values.push(updates.txSignature);
+      fields.push(`tx_signature = $${values.length}`);
+    }
+    if (updates.errorMessage !== undefined) {
+      values.push(updates.errorMessage);
+      fields.push(`error_message = $${values.length}`);
+    }
+    if (updates.metadata !== undefined) {
+      values.push(JSON.stringify(updates.metadata));
+      fields.push(`metadata = $${values.length}::jsonb`);
+    }
+
+    if (fields.length === 0) {
+      return;
+    }
+
+    fields.push("updated_at = NOW()");
+
+    await pool.query(
+      `UPDATE dust_sweep_runs
+       SET ${fields.join(", ")}
+       WHERE id = $1`,
+      values,
+    );
   },
 };
