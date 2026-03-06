@@ -1447,25 +1447,6 @@ export default function DashboardPage() {
                       {successTxSignature.slice(0, 8)}...
                       {successTxSignature.slice(-8)}
                     </p>
-                    <button
-                      type="button"
-                      className="dashboard-success-copy"
-                      onClick={() => {
-                        void navigator.clipboard
-                          .writeText(successTxSignature)
-                          .then(() => {
-                            setSignatureCopied(true);
-                            window.setTimeout(() => {
-                              setSignatureCopied(false);
-                            }, 1200);
-                          })
-                          .catch(() => {
-                            setError("Failed to copy signature");
-                          });
-                      }}
-                    >
-                      {signatureCopied ? "Copied" : "Copy"}
-                    </button>
                   </div>
                 </div>
 
