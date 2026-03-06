@@ -880,6 +880,34 @@ textarea {
   padding: 10px 12px;
 }
 
+.dashboard-loading-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 14;
+  display: grid;
+  place-items: center;
+  gap: 10px;
+  background: rgba(157, 143, 111, 0.48);
+  backdrop-filter: blur(3px);
+}
+
+.dashboard-loading-spinner {
+  width: 24px;
+  height: 24px;
+  border-radius: 999px;
+  border: 2px solid rgba(31, 29, 22, 0.2);
+  border-top-color: #1f1d16;
+  animation: dashboard-spin 700ms linear infinite;
+}
+
+.dashboard-loading-text {
+  margin: 0;
+  color: rgba(31, 29, 22, 0.78);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
 .dashboard-sign-overlay {
   position: absolute;
   inset: 0;
@@ -1115,6 +1143,15 @@ textarea {
   to {
     opacity: 1;
     transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes dashboard-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
   }
 }
 

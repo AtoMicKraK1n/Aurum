@@ -20,6 +20,13 @@ type GrailUserLookup = {
   userPda?: string;
 };
 
+type GrailUserRow = {
+  userId: string;
+  userPda?: string;
+  walletAddress?: string;
+  referenceId?: string;
+};
+
 function timeoutAfter(ms: number, label: string): Promise<never> {
   return new Promise((_, reject) => {
     setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
@@ -192,10 +199,108 @@ function pickUserLookupCandidate(payload: unknown): GrailUserLookup | null {
   return pickFrom(dataContainer);
 }
 
+function extractUserRow(item: unknown): GrailUserRow | null {
+  if (!item || typeof item !== "object") {
+    return null;
+  }
+
+  const row = item as Record<string, unknown>;
+  const userId =
+    typeof row.userId === "string"
+      ? row.userId
+      : typeof row.id === "string"
+        ? row.id
+        : "";
+  if (!userId) {
+    return null;
+  }
+
+  const userPda =
+    typeof row.userPda === "string"
+      ? row.userPda
+      : typeof row.pda === "string"
+        ? row.pda
+        : undefined;
+
+  const walletAddress =
+    typeof row.userWalletAddress === "string"
+      ? row.userWalletAddress
+      : typeof row.walletAddress === "string"
+        ? row.walletAddress
+        : typeof row.wallet === "string"
+          ? row.wallet
+          : typeof row.user_wallet_address === "string"
+            ? row.user_wallet_address
+            : undefined;
+
+  const metadata =
+    row.metadata && typeof row.metadata === "object"
+      ? (row.metadata as Record<string, unknown>)
+      : undefined;
+  const referenceId =
+    typeof row.referenceId === "string"
+      ? row.referenceId
+      : metadata && typeof metadata.referenceId === "string"
+        ? metadata.referenceId
+        : undefined;
+
+  return { userId, userPda, walletAddress, referenceId };
+}
+
+function pickMatchingUserByWallet(
+  payload: unknown,
+  walletAddress: string,
+): GrailUserLookup | null {
+  const target = walletAddress.trim();
+  if (!target) {
+    return null;
+  }
+
+  const queue: unknown[] = [payload];
+  const visited = new Set<unknown>();
+  let processed = 0;
+  const MAX_NODES = 5000;
+
+  while (queue.length > 0 && processed < MAX_NODES) {
+    const current = queue.shift();
+    processed += 1;
+    if (!current || typeof current !== "object") {
+      continue;
+    }
+    if (visited.has(current)) {
+      continue;
+    }
+    visited.add(current);
+
+    const row = extractUserRow(current);
+    if (row) {
+      if (row.walletAddress === target || row.referenceId === target) {
+        return { userId: row.userId, userPda: row.userPda };
+      }
+    }
+
+    if (Array.isArray(current)) {
+      for (const item of current) {
+        queue.push(item);
+      }
+      continue;
+    }
+
+    for (const value of Object.values(current as Record<string, unknown>)) {
+      if (value && typeof value === "object") {
+        queue.push(value);
+      }
+    }
+  }
+
+  return null;
+}
+
 async function findExistingGrailUserByWallet(
   walletAddress: string,
 ): Promise<GrailUserLookup | null> {
-  const wallet = encodeURIComponent(walletAddress.trim());
+  const normalizedWallet = walletAddress.trim();
+  const wallet = encodeURIComponent(normalizedWallet);
   const lookupUrls = [
     `${GRAIL_API}/api/users?userWalletAddress=${wallet}`,
     `${GRAIL_API}/api/users?walletAddress=${wallet}`,
@@ -212,12 +317,39 @@ async function findExistingGrailUserByWallet(
         },
         timeout: GRAIL_HTTP_TIMEOUT_MS,
       });
-      const candidate = pickUserLookupCandidate(response.data);
+      const candidate =
+        pickMatchingUserByWallet(response.data, normalizedWallet) ||
+        pickUserLookupCandidate(response.data);
       if (candidate) {
         return candidate;
       }
     } catch {
       // Try next known lookup pattern.
+    }
+  }
+
+  // Fallback: some Grail environments support list pagination but not direct wallet lookup.
+  const listUrls = [
+    `${GRAIL_API}/api/users?limit=100`,
+    `${GRAIL_API}/api/users?page=1&limit=100`,
+    `${GRAIL_API}/api/users?offset=0&limit=100`,
+    `${GRAIL_API}/api/users`,
+  ];
+
+  for (const url of listUrls) {
+    try {
+      const response = await axios.get(url, {
+        headers: {
+          "x-api-key": GRAIL_API_KEY,
+        },
+        timeout: GRAIL_HTTP_TIMEOUT_MS,
+      });
+      const candidate = pickMatchingUserByWallet(response.data, normalizedWallet);
+      if (candidate) {
+        return candidate;
+      }
+    } catch {
+      // Try next list pattern.
     }
   }
 

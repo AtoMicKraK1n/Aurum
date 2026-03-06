@@ -1274,6 +1274,13 @@ export default function DashboardPage() {
 
           <p className="dashboard-footer">POWERED BY GRAIL</p>
 
+          {loading ? (
+            <div className="dashboard-loading-overlay">
+              <div className="dashboard-loading-spinner" aria-hidden="true" />
+              <p className="dashboard-loading-text">Loading live data...</p>
+            </div>
+          ) : null}
+
           {isSweepModalOpen ? (
             <div className="dashboard-sign-overlay">
               <div className="dashboard-sign-modal dashboard-sweep-basic-modal">

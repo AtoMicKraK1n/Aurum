@@ -1,125 +1,135 @@
-# Aurum — Convert Dust USDC to Gold
+# Aurum
 
-Dust conversion for Solana USDC to tokenized Gold.  
-Built with Oro’s GRAIL API.
+Aurum is a self-custody Solana app that converts USDC into tokenized gold using Oro/Grail APIs.
 
-Aurum allows users to deposit dust USDC — small, idle amounts sitting in their wallets — which are batched daily and converted into tokenized gold, distributed proportionally back to users.
+The current PoC includes:
+- Wallet auth with Privy
+- Self-custody purchase intent and submit flow
+- On-chain balance display (USDC and gold token accounts)
+- Optional auto-sweep settings and backend sweep cron scaffolding
 
----
+## Monorepo Structure
 
-## What It Does
+- `app/` - Next.js frontend
+- `lib/` - shared frontend libraries (API client, providers, state)
+- `backend/` - Express + TypeScript backend
+- `backend/supabase/migrations/` - SQL migrations
 
-Users deposit small amounts of USDC. The system aggregates these deposits and converts them into GOLD once per day.
+## Runtime Flow (Self-Custody)
 
-### Flow
+1. User connects wallet in frontend.
+2. Frontend calls backend `POST /api/self/purchase-intent`.
+3. Backend creates Grail purchase intent and stores trade in `self_custody_trades`.
+4. Frontend signs serialized transaction in wallet.
+5. Frontend sends signed payload to backend `POST /api/self/purchase-submit`.
+6. Backend submits to Grail transaction endpoint and marks trade completed.
 
-1. User queues their dust USDC
-2. Daily job aggregates all pending dust
-3. Buy GOLD with USDC (via GRAIL)
-4. Custodial partner signs and submits transaction
-5. Distribute gold proportionally to users
+## Auto Sweep (Current PoC)
 
-## 🏗 Architecture
+Backend now has:
+- `dust_sweep_settings` table
+- `dust_sweep_runs` table
+- Endpoints:
+  - `GET /api/dust/sweep/settings`
+  - `POST /api/dust/sweep/settings`
+  - `GET /api/dust/sweep/runs`
+- Optional cron worker (`ENABLE_DUST_SWEEP_CRON=true`) that creates self-custody intents when thresholds are met.
 
-The system is divided into three main parts:
+Frontend currently includes:
+- Auto Sweep toggle and basic settings popup in dashboard.
 
----
+## Local Development
 
-### 1. Frontend Flow
+### Frontend
 
-<img width="540" height="324" alt="image" src="https://github.com/user-attachments/assets/9c085884-73cc-470a-bde4-4cda39d8c892" />
+From repo root:
 
+```bash
+bun run dev
+```
 
-Handles all user interactions.
+Default: `http://localhost:3000`
 
-**Services**
+### Backend
 
-- **Auth Service**  
-  Wallet connection and verification.
+From `backend/`:
 
-- **Dust Queue Service**  
-  Adds user USDC to the conversion queue.
+```bash
+bun run dev
+```
 
-- **Balance Service**  
-  Fetches user GOLD holdings.
+Default: `http://localhost:3001`
 
-All services read/write state to PostgreSQL.
+## Required Environment Variables
 
----
+## Frontend (`.env` in repo root)
 
-### 2. Batch Converter (Core Logic)
+- `NEXT_PUBLIC_API_BASE_URL`
+- `NEXT_PUBLIC_PRIVY_APP_ID`
+- `NEXT_PUBLIC_SOLANA_RPC_URL`
+- `NEXT_PUBLIC_USDC_MINT`
+- `NEXT_PUBLIC_GOLD_MINT`
+- `NEXT_PUBLIC_SOLANA_EXPLORER_CLUSTER`
 
-<img width="1112" height="368" alt="image" src="https://github.com/user-attachments/assets/fff285d6-8ebc-4773-ba0d-7ead3655afae" />
+## Backend (`backend/.env`)
 
+Core:
+- `DATABASE_URL`
+- `SOLANA_RPC_URL`
+- `GRAIL_API_URL`
+- `GRAIL_API_KEY`
+- `SPONSOR_PRIVATE_KEY`
+- `PURCHASE_OPERATING_MODE` (`self_custody` recommended)
 
-Runs once daily at **00:00 UTC**.
+Server/deploy:
+- `PORT`
+- `CORS_ORIGINS` (comma-separated exact origins)
+- `ADMIN_API_KEY`
 
-**Steps**
+Optional:
+- `ENABLE_BATCH_CRON`
+- `ENABLE_DUST_SWEEP_CRON`
+- `DUST_SWEEP_INTERVAL_SECONDS`
+- `DUST_SWEEP_USDC_MINT`
+- `ALLOW_UNVERIFIED_DUST_QUEUE`
+- `DEPOSIT_INTENT_EXPIRY_MINUTES`
+- `TREASURY_WALLET_ADDRESS`
+- `USDC_MINT`
+- `GRAIL_HTTP_TIMEOUT_MS`
+- `TX_CONFIRM_TIMEOUT_MS`
 
-1. Fetch all pending dust from Postgres
-2. Aggregate USDC deposits
-3. Purchase GOLD using USDC (GRAIL)
-4. Calculate proportional user shares
-5. Update user balances in Postgres
+## Scripts
 
----
+### Root
 
-### 3. System Overview
+- `bun run dev` - start Next.js
+- `bun run build` - build Next.js
 
-High-level flow:
+### Backend (`backend/`)
 
-<img width="469" height="440" alt="image" src="https://github.com/user-attachments/assets/f6d2fe57-b4ab-4e14-81ec-d5521d743872" />
+- `bun run dev` - start API server
+- `bun run build` - compile backend
+- `bun run batch` - run batch converter once
+- `bun run test:registration` - test Grail registration script
+- `bun run test:purchase` - test purchase script
+- `bun run test:batch` - test batch script
 
-- Frontend calls Backend API  
-- Backend triggers Daily Batch Job  
-- Batch Job interacts with:
-  - GRAIL (USDC → GOLD)
-  - Solana RPC (transaction confirmations)
-- All application state lives in PostgreSQL
+## Deployment Notes
 
----
+## Frontend (Vercel)
 
-Think of it as:
+Set frontend envs in Vercel exactly as listed above, especially:
+- `NEXT_PUBLIC_API_BASE_URL` must point to deployed backend URL, not localhost.
 
-> **“Turn forgotten USDC dust into GOLD — automatically.”**
+## Backend (Render)
 
----
+Set backend envs in Render and ensure:
+- `CORS_ORIGINS` includes your Vercel production domain (and preview domains if needed).
+- Service and DB point to the same environment you tested locally.
 
-## Backend Ops
+If browser console shows `net::ERR_FAILED` and backend logs show `Not allowed by CORS`, fix `CORS_ORIGINS` first.
 
-- Daily batch schedule runs at **00:00 UTC** in the backend process.
-- Disable scheduler locally with `ENABLE_BATCH_CRON=false`.
-- Manual trigger endpoint: `POST /api/admin/batch/run` with header `x-admin-key: <ADMIN_API_KEY>`.
+## Security
 
-### Useful scripts (`backend/`)
-
-- `bun run batch` - run batch conversion once
-- `bun run test:batch` - run batch converter tests (empty, happy, failure)
-- `bun run test:registration` - test GRAIL user registration flow
-- `bun run test:purchase` - test GRAIL purchase flow
-
-## Deposit Settlement Flow (USDC)
-
-Use these endpoints to enforce real USDC deposits before queueing:
-
-1. `POST /api/deposits/create-intent`
-2. User sends USDC on devnet to `TREASURY_WALLET_ADDRESS`
-3. `POST /api/deposits/confirm` with the transfer `txSignature`
-4. Backend verifies on-chain transfer and queues dust
-
-Direct `POST /api/dust/queue` is disabled by default.  
-Enable only for local unsafe testing with `ALLOW_UNVERIFIED_DUST_QUEUE=true`.
-
-Required backend env vars:
-
-- `TREASURY_WALLET_ADDRESS` - partner treasury wallet receiving USDC
-- `USDC_MINT` - optional; defaults to devnet USDC mint
-- `DEPOSIT_INTENT_EXPIRY_MINUTES` - optional; default `30`
-- `PURCHASE_OPERATING_MODE` - optional; `self_custody` (default) or `custodial` fallback
-
-Purchase mode behavior:
-
-1. `self_custody`:
-Enables `POST /api/self/purchase-intent` and `POST /api/self/purchase-submit` flow.
-2. `custodial`:
-Fallback mode using deposit intents + batch conversion. Self-custody endpoints return `409`.
+- Do not commit real secrets in `.env` files.
+- Rotate any key that has ever been exposed in logs, screenshots, or committed history.
