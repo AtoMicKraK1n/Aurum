@@ -14,8 +14,10 @@ import { ApiClientError } from "@/lib/api/client";
 import { createAurumApiService } from "@/lib/api/services";
 import { useAuthState } from "@/lib/state/auth-context";
 
-const DEFAULT_DEVNET_RPC_URL =
-  "https://devnet.helius-rpc.com/?api-key=c434b5e0-f58e-4d87-84c1-b7bba03c939f";
+const DEFAULT_SOLANA_RPC_URL =
+  process.env.NEXT_PUBLIC_SOLANA_RPC_URL ||
+  process.env.SOLANA_RPC_URL ||
+  "https://api.devnet.solana.com";
 const DEFAULT_DEVNET_USDC_MINT = "8METbBgV5CSyorAaW5Lm42dbWdE8JU9vfBiM67TK9Mp4";
 const DEFAULT_DEVNET_GOLD_MINT = "Cu5rvMuh9asSHyCtof81B8sYU8iM62MgaWVVZnQDDZst";
 const DEFAULT_SELF_PURCHASE_SLIPPAGE_PERCENT = 40;
@@ -360,7 +362,7 @@ async function estimateNetworkFeeSolFromSerializedTx(
 ): Promise<number> {
   try {
     const rpcUrl =
-      process.env.NEXT_PUBLIC_SOLANA_RPC_URL || DEFAULT_DEVNET_RPC_URL;
+      process.env.NEXT_PUBLIC_SOLANA_RPC_URL || DEFAULT_SOLANA_RPC_URL;
     const connection = new Connection(rpcUrl);
     const tx = deserializeAnyTransaction(serializedTxBase64);
 
@@ -385,7 +387,7 @@ async function getWalletTokenBalance(
   mintAddress: string,
 ): Promise<number> {
   const rpcUrl =
-    process.env.NEXT_PUBLIC_SOLANA_RPC_URL || DEFAULT_DEVNET_RPC_URL;
+    process.env.NEXT_PUBLIC_SOLANA_RPC_URL || DEFAULT_SOLANA_RPC_URL;
 
   const connection = new Connection(rpcUrl);
   const ownerPubkey = new PublicKey(walletAddress);
@@ -449,13 +451,14 @@ export default function DashboardPage() {
   const [pendingIntent, setPendingIntent] =
     useState<PendingSelfPurchaseIntent | null>(null);
   const [signatureCopied, setSignatureCopied] = useState(false);
-  const [autoSweepSettings, setAutoSweepSettings] = useState<AutoSweepSettingsState>({
-    enabled: false,
-    minSweepUsdc: 1,
-    maxSweepUsdc: 25,
-    slippagePercent: 20,
-    cooldownMinutes: 30,
-  });
+  const [autoSweepSettings, setAutoSweepSettings] =
+    useState<AutoSweepSettingsState>({
+      enabled: false,
+      minSweepUsdc: 1,
+      maxSweepUsdc: 25,
+      slippagePercent: 20,
+      cooldownMinutes: 30,
+    });
   const [savingAutoSweep, setSavingAutoSweep] = useState(false);
   const [isSweepModalOpen, setIsSweepModalOpen] = useState(false);
   const [sweepDraft, setSweepDraft] = useState<AutoSweepSettingsState>({
@@ -520,14 +523,13 @@ export default function DashboardPage() {
           buyQuoteData,
           purchaseConfig,
           dustSweepSettings,
-        ] =
-          await Promise.all([
-            api.getUserBalance(resolvedWalletAddress),
-            api.getDustStatus(resolvedWalletAddress),
-            api.getBuyQuote(1),
-            api.getPurchaseConfig(),
-            api.getDustSweepSettings(resolvedWalletAddress),
-          ]);
+        ] = await Promise.all([
+          api.getUserBalance(resolvedWalletAddress),
+          api.getDustStatus(resolvedWalletAddress),
+          api.getBuyQuote(1),
+          api.getPurchaseConfig(),
+          api.getDustSweepSettings(resolvedWalletAddress),
+        ]);
 
         if (cancelled) {
           return;
@@ -912,7 +914,9 @@ export default function DashboardPage() {
     }
   }
 
-  async function saveAutoSweepSettings(next: AutoSweepSettingsState): Promise<boolean> {
+  async function saveAutoSweepSettings(
+    next: AutoSweepSettingsState,
+  ): Promise<boolean> {
     if (!resolvedWalletAddress) {
       setError("Wallet not connected");
       return false;
@@ -976,12 +980,18 @@ export default function DashboardPage() {
   }
 
   async function handleSaveSweepModal() {
-    if (!Number.isFinite(sweepDraft.minSweepUsdc) || sweepDraft.minSweepUsdc <= 0) {
+    if (
+      !Number.isFinite(sweepDraft.minSweepUsdc) ||
+      sweepDraft.minSweepUsdc <= 0
+    ) {
       setError("Threshold must be a positive USDC amount");
       return;
     }
 
-    if (!Number.isFinite(sweepDraft.slippagePercent) || sweepDraft.slippagePercent <= 0) {
+    if (
+      !Number.isFinite(sweepDraft.slippagePercent) ||
+      sweepDraft.slippagePercent <= 0
+    ) {
       setError("Slippage must be greater than 0");
       return;
     }
@@ -1252,13 +1262,6 @@ export default function DashboardPage() {
                 <span className="dashboard-sweep-knob" />
               </button>
             </div>
-            <p className="dashboard-sweep-copy">
-              Automatically convert USDC into gold when your balance reaches a
-              defined threshold.
-            </p>
-            <p className="dashboard-sweep-meta">
-              Threshold: {autoSweepSettings.minSweepUsdc.toFixed(2)} USDC
-            </p>
             <button
               type="button"
               className="dashboard-sweep-configure"
@@ -1269,28 +1272,12 @@ export default function DashboardPage() {
             </button>
           </section>
 
-          <p className="dashboard-footer">
-              {error
-                ? `ERROR: ${error}`
-                : loading
-                  ? "LOADING LIVE DATA"
-                  : purchaseActionMessage
-                    ? purchaseActionMessage
-                    : purchaseMode === "custodial"
-                      ? "CUSTODIAL FALLBACK MODE"
-                      : buyEstimate.stale
-                        ? "QUOTE SOURCE: FALLBACK CACHE"
-                        : "POWERED BY GRAIL"}
-          </p>
+          <p className="dashboard-footer">POWERED BY GRAIL</p>
 
           {isSweepModalOpen ? (
             <div className="dashboard-sign-overlay">
               <div className="dashboard-sign-modal dashboard-sweep-basic-modal">
                 <h2 className="dashboard-sign-title">Auto Sweep Settings</h2>
-                <p className="dashboard-sign-subtitle">
-                  Basic controls for automatic sweep execution.
-                </p>
-
                 <div className="dashboard-sweep-basic-fields">
                   <label className="dashboard-sweep-basic-field">
                     <span>THRESHOLD (USDC)</span>
@@ -1351,7 +1338,8 @@ export default function DashboardPage() {
                 </div>
 
                 <p className="dashboard-sweep-basic-note">
-                  Next sweep at balance ≥ {sweepDraft.minSweepUsdc.toFixed(2)} USDC
+                  Next sweep at balance ≥ {sweepDraft.minSweepUsdc.toFixed(2)}{" "}
+                  USDC
                 </p>
 
                 <button

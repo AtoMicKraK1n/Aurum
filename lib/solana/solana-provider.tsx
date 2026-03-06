@@ -12,7 +12,9 @@ import {
 
 export function SolanaProvider({ children }: { children: React.ReactNode }) {
   const endpoint =
-    process.env.SOLANA_RPC_URL || "https://api.devnet.solana.com";
+    process.env.NEXT_PUBLIC_SOLANA_RPC_URL ||
+    process.env.SOLANA_RPC_URL ||
+    "https://api.devnet.solana.com";
 
   const wallets = useMemo(
     () => [new PhantomWalletAdapter(), new SolflareWalletAdapter()],
