@@ -2,6 +2,8 @@
 
 Aurum is a self-custody Solana app that converts dust into tokenized gold using Oro/Grail APIs.
 
+[DEMO VIDEO](https://drive.google.com/file/d/1IggFDXt5dH40A0vP6yk2Pmua-q-vI7qR/view?usp=sharing)
+
 The current PoC includes:
 - Wallet auth with Privy
 - Self-custody purchase intent and submit flow
